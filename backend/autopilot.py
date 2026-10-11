@@ -118,6 +118,9 @@ class Autopilot:
             self.wake()
 
     async def enable(self):
+        if self.model is not None and hasattr(self.model, 'start'):
+            self.model.enabled = True
+            self.model.start()
         self.state['enabled'] = True
         self.persist()
         await self.configure()
@@ -380,6 +383,9 @@ class Autopilot:
         firms = [self.state['queue'].pop(0) for _ in range(min(4, len(self.state['queue'])))]
         source = 'Qwen' if firms else 'plantillas'
         firms += self.fallback(4 - len(firms))
+        if not firms:
+            self.note('search', 'Consultas recorridas. Se espera un nuevo plan de Qwen; el rastreador sin créditos puede seguir avanzando.')
+            return 'Piloto automático · ' + KEYWORDS, []
         self.state['used'] = (self.state['used'] + firms)[-200:]
         self.note('search', f'Búsqueda de gestoras nuevas ({source}): ' + ' · '.join(firms))
         templates = [q for q in expand_queries(KEYWORDS)['queries'] if q['phase'] == 'people']

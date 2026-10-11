@@ -164,3 +164,16 @@ def test_completion_only_accepts_facts_quoted_in_stored_sources(tmp_path):
     calls = len(pilot.model.calls)
     asyncio.run(pilot.complete())
     assert len(pilot.model.calls) == calls  # already checked; retried after two weeks
+
+
+def test_exhausted_web_templates_do_not_create_empty_runs(tmp_path):
+    from backend.autopilot import COUNTRIES, FALLBACK
+    app,pilot,_=setup(tmp_path)
+    pilot.state['used']=[template.format(country=country) for country in COUNTRIES for template in FALLBACK]
+    keywords,queries=pilot.web_batch()
+    assert queries==[]
+    ctrl=app.state.scanning
+    ctrl.streams['web'].update(enabled=True,status='queued',config={'autopilot':True},next_at='2020-01-01T00:00:00+00:00')
+    asyncio.run(ctrl.tick())
+    assert app.state.db.latest_run() is None
+    assert ctrl.snapshot()['web']['enabled'] and ctrl.snapshot()['web']['status']=='waiting'

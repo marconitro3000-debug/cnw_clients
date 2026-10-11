@@ -50,3 +50,15 @@ td .opportunity-pill{display:block;width:fit-content;margin-top:4px}
 .autopilot-queue{margin:6px 0;padding-left:18px;font-size:12px;display:grid;gap:3px}
 .junk-reason{display:block;font-size:11px;color:#976949;font-weight:500}
 .segment-firm h3 .junk-reason{display:inline;margin-left:8px}
+
+.public-crawler { margin: 16px 0; }
+.public-crawler h2 { display: flex; align-items: center; gap: 8px; }
+.public-crawler .section-line { flex-wrap: wrap; gap: 12px; }
+.public-crawler .section-line > div { flex: 1 1 280px; }
+.crawler-metrics { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 12px 0; }
+.crawler-metrics span { display: flex; gap: 6px; }
+.crawler-current,.crawler-log a,.crawler-log span { overflow-wrap: anywhere; }
+.crawler-current { display: flex; align-items: center; gap: 6px; }
+.crawler-log { padding-left: 20px; }
+.crawler-log li { display: grid; gap: 4px; margin: 10px 0; font-size: 13px; }
+.public-crawler textarea { display: block; width: 100%; max-width: 600px; margin-top: 8px; }

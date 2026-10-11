@@ -205,3 +205,17 @@ Guardar una clave no verifica el acceso a la API. En Búsquedas → Apollo o Aju
 ### Apollo gratuito con contactos guardados
 
 En **Búsquedas → Apollo → Origen de Apollo**, puedes seleccionar **Sincronizar contactos guardados**. Usa el endpoint oficial `contacts/search` (0 créditos), lee tu lista guardada y la incorpora a la misma agenda con deduplicación y protección de contactados. No descubre personas nuevas ni solicita enriquecimiento. Las palabras clave y la página se aplican a la lista guardada; los filtros corporativos pertenecen al modo de descubrimiento. En continuo, revisa nuevas incorporaciones cada cinco minutos, alternando con web. Los contactos sin identidad completa permanecen para revisión. Las cuentas gratuitas que usan el descubrimiento API necesitan correo de empresa y cumplir los requisitos de Apollo; consulta https://docs.apollo.io/reference/people-api-search.
+
+## Rastreo web sin créditos
+
+En **Búsquedas → Web → Rastreo web sin créditos**, pulsa **Activar rastreador**. Es un proceso independiente que trabaja a la vez que Tavily y sigue funcionando sin API key o cuando se agota su cuota. Conserva en SQLite las URLs pendientes y se reanuda al arrancar el servidor. **Detener rastreador** solo detiene este proceso.
+
+Parte de los directorios públicos de IIMI, BVI y Investment Association, las webs de las gestoras guardadas y las webs que va descubriendo Tavily. Recorre enlaces de equipos, biografías, estrategia y noticias, incluidos menús y sitemaps; puedes añadir una URL corporativa al activarlo. No hace búsquedas globales desde Qwen: descubre nuevas URLs siguiendo fuentes reales.
+
+Al activar el rastreador o el piloto automático se arranca Qwen si está instalado. El modelo ayuda a identificar la gestora y extraer personas cuando fallan las reglas; solo se aceptan nombres y cargos con citas presentes en la página. Las páginas accesibles siguen procesándose si falta o falla Qwen. Respeta robots.txt, bloquea destinos privados, mantiene una pausa entre lecturas y limita profundidad y páginas por dominio. Una página inaccesible se registra y se continúa con las siguientes.
+
+El panel distingue páginas leídas, gestoras y contactos nuevos, coincidencias, URLs pendientes y avisos. Los contactos se incorporan a la misma agenda y se exportan a shared-data sin duplicarlos ni actualizar personas ya contactadas. Las URLs procesadas se revisitan a los siete días; las fallidas, al día siguiente. Los escaneos convencionales también pueden revisitar gestoras si la búsqueda anterior no produjo contactos o tiene más de siete días.
+
+API: GET /api/crawler, POST /api/crawler/start (seed_urls opcional), POST /api/crawler/stop.
+
+Si el piloto agota las consultas preparadas, espera nuevas consultas de Qwen: no crea lotes vacíos con cero búsquedas. El rastreador gratuito sigue operando durante esa espera.

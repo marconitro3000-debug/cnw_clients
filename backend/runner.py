@@ -1,5 +1,6 @@
 import asyncio
 import re
+from datetime import datetime, timedelta, timezone
 from .db import ACTIVE
 from .domain import now, normalized
 from .extract import corporate_domain, domain_of, extract_page, result_firm, result_person, team_links
@@ -58,11 +59,11 @@ class Runner:
         found_ids = set()
 
         def explored(candidate):
-            # Firms whose people were already searched in an earlier run only yield cached duplicates.
+            # Skip recent successful searches, but revisit empty or old searches.
             with self.db.connect() as con:
                 row = con.execute("SELECT name FROM firms WHERE domain=? LIMIT 1", (candidate.get("domain", "").lower().removeprefix("www."),)).fetchone()
                 if row is None: return False
-                return con.execute("SELECT 1 FROM run_queries WHERE phase='people' AND run_id<>? AND instr(text, ?)>0 LIMIT 1", (run_id, '"' + row[0] + '"')).fetchone() is not None
+                return con.execute("SELECT 1 FROM run_queries q JOIN runs r ON r.id=q.run_id WHERE q.phase='people' AND q.run_id<>? AND instr(q.text, ?)>0 AND r.contacts_found>0 AND r.started_at>=? LIMIT 1", (run_id, '"' + row[0] + '"', (datetime.now(timezone.utc)-timedelta(days=7)).isoformat())).fetchone() is not None
 
         # Templates are expanded for at most four discovered companies.
         firms_plan = [q for q in plan if q["phase"] == "firms"]
@@ -140,6 +141,13 @@ class Runner:
             except ProviderError as error:
                 self.db.update_query(query_id, "failed", error=str(error))
                 raise
+            crawler = getattr(self, 'crawler', None)
+            if crawler and crawler.state['enabled']:
+                links = []
+                for result in results:
+                    candidate = result_firm(result)
+                    if candidate:links.append({'url':result['url'],'name':candidate['name'],'priority':10})
+                if links:await asyncio.to_thread(crawler.enqueue, links, 'Búsqueda web')
             completed += 1
             self.db.update_run(run_id, completed_queries=completed)
             if self.canceled(run_id): return False

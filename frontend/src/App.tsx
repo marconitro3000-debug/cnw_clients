@@ -4,6 +4,7 @@ import { api, ApiError, activeRun, formatDate, issueLabel, matches, statusLabel,
 import { DEMO } from './demo'
 import { Modal, Avatar } from './ui'
 import { DashboardPanel, ContactWorkspace, ScriptsWorkspace, ScreenerWorkspace, IntegrationSettings, NextBatchDialog, PublicDataWorkspace } from './Commercial'
+import { CrawlerPanel } from './Crawler'
 import { SignalsWorkspace } from './Signals'
 import { SegmentsWorkspace } from './Segments'
 import { AutopilotPanel } from './Autopilot'
@@ -175,6 +176,7 @@ export default function App() {
   const toggleTheme=()=>{const next=!dark;setDark(next);if(next)document.documentElement.dataset.theme='dark';else delete document.documentElement.dataset.theme;try{localStorage.setItem('kerna-theme',next?'dark':'light')}catch{/* the preference is optional */}}
   const [providerTab,setProviderTab]=useState<'web'|'public'|'signals'|'apollo'>('web')
   const [scanBusy, setScanBusy] = useState(false), [agendaQualification, setAgendaQualification] = useState('all')
+  const [agendaAllProfiles,setAgendaAllProfiles]=useState(false)
   const [agendaSearch,setAgendaSearch]=useState(''),[agendaSegment,setAgendaSegment]=useState(''),[agendaKey,setAgendaKey]=useState(0)
   const [agendaView, setAgendaView] = useState('all'), [revision, setRevision] = useState(0), [shared, setShared] = useState<SharedStatus | null>(null)
   const [scanning, setScanning] = useState<ScanningState | null>(null)
@@ -212,7 +214,7 @@ export default function App() {
   const visibleSearchRun = !!run && ((runInfo?.provider||'web') === providerTab)
   const labels:Record<Page,string> = {inicio:'Tu espacio comercial',contactos:'Contactos',subsectores:'Subsectores',noticias:'Noticias y señales',busquedas:'Búsquedas',scripts:'Guiones comerciales',actividad:'Actividad de búsqueda',configuracion:'Ajustes'}
   const descriptions:Record<Page,string> = {inicio:'Tu evolución y próximas conversaciones, de un vistazo.',contactos:'Una agenda para todas las personas, sus conversaciones y próximos pasos.',subsectores:'Las gestoras ya escaneadas, agrupadas por tipo de negocio.',noticias:'Lanzamientos, contrataciones y expansión de tus gestoras. Suman a la oportunidad comercial y deciden a quién se busca primero.',busquedas:'Encuentra personas y señales recientes. Una misma agenda.',scripts:'Escribe tus aperturas y descubre cuáles consiguen reuniones.',actividad:'Consulta el avance, las fuentes y los avisos de la última ejecución.',configuracion:'Conexiones y preferencias de este equipo.'}
-  const showAgenda = (view: string) => {setAgendaKey(k=>k+1);setAgendaView(view);setAgendaSearch('');setAgendaSegment('');setAgendaQualification('all');navigate('contactos')}
+  const showAgenda = (view: string) => {setAgendaAllProfiles(false);setAgendaKey(k=>k+1);setAgendaView(view);setAgendaSearch('');setAgendaSegment('');setAgendaQualification('all');navigate('contactos')}
   const addContact = () => { setEditing(null); setModal("edit") }
   const reviewContact = (c: Contact) => { setEditing(c); setModal("edit") }
   const newRun = (r: Run) => { setRun(r); setDemo(false); void refresh() }
@@ -255,6 +257,7 @@ export default function App() {
         })}<p className="scan-explanation">Los tres escaneos alimentan la misma agenda y alternan sin solaparse. Puedes cerrar esta pestaña: siguen mientras el servidor esté abierto. Detener conserva todo.</p></section>}
 
         {page==='busquedas'&&<AutopilotPanel compact onRefresh={()=>void refresh()}/>}
+        {page==='busquedas'&&providerTab==='web'&&<CrawlerPanel onRefresh={()=>void refresh()} onContacts={()=>{showAgenda("all");setAgendaAllProfiles(true)}}/>}
         {page==='busquedas'&&<section className="search-provider-workspace"><div className="tabs" role="tablist" aria-label="Tipo de búsqueda"><button role="tab" aria-selected={providerTab==='web'} className={providerTab==='web'?'active':''} onClick={()=>setProviderTab('web')}>Web</button><button role="tab" aria-selected={providerTab==='public'} className={providerTab==='public'?'active':''} onClick={()=>setProviderTab('public')}>Datos de contacto</button><button role="tab" aria-selected={providerTab==='signals'} className={providerTab==='signals'?'active':''} onClick={()=>setProviderTab('signals')}>Noticias y señales</button><button role="tab" aria-selected={providerTab==='apollo'} className={providerTab==='apollo'?'active':''} onClick={()=>setProviderTab('apollo')}>Apollo</button></div>{providerTab==='web'?<div className="panel search-provider-summary"><h2>Búsqueda web</h2><p>Encontramos gestoras y decisores en fuentes públicas. El escaneo continuo avanza solo y omite a las personas ya contactadas.</p><button className="primary small" onClick={()=>setModal('search')} disabled={!!scanning?.web.enabled}><Search size={15}/>Preparar búsqueda</button></div>:providerTab==='public'?<PublicDataWorkspace scanning={scanning} onRefresh={()=>void refresh()}/>:providerTab==='signals'?<SignalsWorkspace scanning={scanning} health={health} revision={revision} onRefresh={()=>void refresh()} onAgenda={company=>{showAgenda('all');setAgendaSearch(company)}}/>:<ScreenerWorkspace contacts={contacts} health={health} run={run} revision={revision} onRefresh={()=>void refresh()} onRun={newRun} onAgenda={()=>showAgenda('all')}/>}</section>}
 
         {connectionNotice && <div className="local-warning" role="status"><Info size={17}/><span>{connectionNotice}</span><button className="secondary small" onClick={()=>void refresh()}>Reintentar conexión</button></div>}
@@ -280,7 +283,7 @@ export default function App() {
           <div className="list-caption"><span><b>{list.length}</b> {list.length === 1 ? 'decisor' : 'decisores'}{demo ? ' de ejemplo' : ''}</span><span>Ordenados por encaje comercial ↓</span></div>
           {loading && !demo ? <div className="empty-state"><LoaderCircle className="spin" size={30} /><h3>Cargando tu lista…</h3></div> : list.length ? <div className="contact-grid">{list.map(c => <ContactCard key={c.id} contact={c} onDetail={setDetail} />)}</div> : <div className="empty-state"><span className="empty-icon"><Search size={29} /></span><h3>{source.length ? 'No hay contactos con estos filtros' : 'Tu próxima oportunidad empieza aquí'}</h3><p>{source.length ? 'Ajusta los filtros o revisa las otras listas para ver más contactos.' : 'Busca gestoras de renta variable y descubre quién toma las decisiones.'}</p>{source.length ? <button className="secondary" onClick={resetFilters}>Restablecer filtros</button> : <button className="primary" disabled={running} onClick={() => setModal('search')}><Sparkles size={16} />Preparar primera búsqueda<ArrowRight size={16} /></button>}<div className="empty-steps"><span>Define tus palabras clave</span><ChevronRight size={14} /><span>Descubre decisores</span><ChevronRight size={14} /><span>Prioriza con evidencia</span></div></div>}
         </section>}
-        {page === "contactos" && <div id="agenda-unificada"><ContactWorkspace key={agendaKey} search={agendaSearch} segment={agendaSegment} qualification={agendaQualification} contacts={contacts} health={health} run={run} revision={revision} view={agendaView} onView={setAgendaView} onRefresh={() => void refresh()} onRun={newRun} onAdd={addContact} onReview={reviewContact}/></div>}
+        {page === "contactos" && <div id="agenda-unificada"><ContactWorkspace includeIncomplete={agendaAllProfiles} key={agendaKey} search={agendaSearch} segment={agendaSegment} qualification={agendaQualification} contacts={contacts} health={health} run={run} revision={revision} view={agendaView} onView={setAgendaView} onRefresh={() => void refresh()} onRun={newRun} onAdd={addContact} onReview={reviewContact}/></div>}
         {page === "noticias" && <SignalsWorkspace scanning={scanning} health={health} revision={revision} onRefresh={() => void refresh()} onAgenda={company=>{showAgenda('all');setAgendaSearch(company)}}/>}
         {page === "subsectores" && <SegmentsWorkspace revision={revision} onAgenda={segment=>{showAgenda('all');setAgendaSegment(segment)}} onCompany={company=>{showAgenda('all');setAgendaSearch(company)}}/>}
         {page === "scripts" && <ScriptsWorkspace revision={revision} onRefresh={() => void refresh()}/>}

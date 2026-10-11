@@ -69,7 +69,9 @@ def create_app(settings=None, provider=None, fetcher_factory=None):
         crm.export_shared()
         app.state.local_model.start()
         await app.state.autopilot.startup()
+        await app.state.crawler.startup()
         yield
+        await app.state.crawler.shutdown()
         await app.state.autopilot.shutdown()
         await app.state.scanning.shutdown()
         await runner.shutdown()

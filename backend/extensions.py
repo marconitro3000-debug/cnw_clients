@@ -20,8 +20,8 @@ def install_extensions(app,db,settings,runner):
     directory=settings.shared_path or (str(ROOT/'shared-data') if Path(settings.database_path).resolve()==(ROOT/'data'/'scout.sqlite').resolve() else str(Path(settings.database_path).with_suffix('.shared')))
     crm=CRM(db,directory); provider=Apollo(settings,crm); apollo_runner=ApolloRunner(runner,provider,crm); ollama=Ollama(crm); runner.ollama=ollama
     from .local_model import LocalModel
-    # Keep local inference disabled so starting the app does not load the model into RAM.
-    runner.local_model=LocalModel(enabled=False)
+    # Load Qwen when an enabled local workflow needs it; idle installations stay unloaded.
+    runner.local_model=LocalModel(enabled=bool(crm.setting('public_crawler',{}).get('enabled') or crm.setting('autopilot',{}).get('enabled')))
     app.state.local_model=runner.local_model
     from .continuous import ContinuousScanner
     scanning=ContinuousScanner(runner,apollo_runner,crm)
@@ -29,8 +29,25 @@ def install_extensions(app,db,settings,runner):
     from .autopilot import Autopilot, is_junk
     autopilot=Autopilot(crm,scanning,runner.local_model)
     app.state.autopilot=autopilot
+    from .crawler import PublicCrawler
+    app.state.crawler=PublicCrawler(crm,runner.local_model,runner.fetcher_factory)
+    runner.crawler=app.state.crawler
     app.state.crm,app.state.apollo,app.state.ollama=crm,apollo_runner,ollama
     router=APIRouter(prefix='/api')
+
+    from pydantic import BaseModel, Field
+    class CrawlerInput(BaseModel):
+        seed_urls:list[str]=Field(default_factory=list,max_length=30)
+    @router.get('/crawler')
+    async def crawler_status():
+        import asyncio
+        return await asyncio.to_thread(app.state.crawler.snapshot)
+    @router.post('/crawler/start')
+    async def crawler_start(body:CrawlerInput):
+        try:return await app.state.crawler.enable(body.seed_urls)
+        except ValueError as e:raise HTTPException(422,str(e)) from None
+    @router.post('/crawler/stop')
+    async def crawler_stop():return await app.state.crawler.stop()
 
     @router.get('/local-model')
     async def local_model_health(): return await runner.local_model.health()

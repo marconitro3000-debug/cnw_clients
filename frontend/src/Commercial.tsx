@@ -34,9 +34,9 @@ export function DashboardPanel({revision,onView}:{revision:number;onView:(view:s
   </section>
 }
 
-export function ContactWorkspace({search='',segment='',qualification='all',contacts,health,run,revision,view,onView,onRefresh,onRun,onAdd,onReview}:{contacts:Contact[];health:Health|null;run:Run|null;revision:number;view:string;onView:(v:string)=>void;onRefresh:()=>void;onRun:(r:Run)=>void;onAdd:()=>void;onReview:(c:Contact)=>void;qualification?:string;search?:string;segment?:string}) {
+export function ContactWorkspace({includeIncomplete=false,search='',segment='',qualification='all',contacts,health,run,revision,view,onView,onRefresh,onRun,onAdd,onReview}:{contacts:Contact[];health:Health|null;run:Run|null;revision:number;view:string;onView:(v:string)=>void;onRefresh:()=>void;onRun:(r:Run)=>void;onAdd:()=>void;onReview:(c:Contact)=>void;qualification?:string;search?:string;segment?:string;includeIncomplete?:boolean}) {
   // Arriving from another page shows every profile that matches the requested firm or subsector.
-  const [filters,setFilters]=useState({q:search,status:qualification,stage:'',country:'',role:'',min_score:'0',size:'',channel:'',owner:'',letter:'',reachability:search||segment?'all':'reachable',signals:'all',opportunity:'all',sort:'name',segment}),[page,setPage]=useState(1)
+  const [filters,setFilters]=useState({q:search,status:qualification,stage:'',country:'',role:'',min_score:'0',size:'',channel:'',owner:'',letter:'',reachability:includeIncomplete||search||segment?'all':'reachable',signals:'all',opportunity:'all',sort:'name',segment}),[page,setPage]=useState(1)
   const [rows,setRows]=useState<CRMContact[]>([]),[total,setTotal]=useState(0),[error,setError]=useState(''),[loading,setLoading]=useState(false)
   const [advanced,setAdvanced]=useState(false)
   const [selected,setSelected]=useState<number[]>([]),[detail,setDetail]=useState<{contact:CRMContact;channel?:string}|null>(null),[busy,setBusy]=useState(false)

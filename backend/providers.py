@@ -106,6 +106,7 @@ class WebFetcher:
         self.robots = {}
         self.pages = 0
         self.max_pages = 16
+        self.max_bytes = 2000000
 
     async def validate(self, url):
         if not safe_url(url) or is_linkedin(url):
@@ -139,7 +140,10 @@ class WebFetcher:
                     return response.status_code, UnicodeDammit(bytes(data), known_definite_encodings=[response.encoding] if "charset=" in response.headers.get("content-type","").lower() else [], is_html=True).unicode_markup or bytes(data).decode("utf-8",errors="replace"), url, response.headers.get("content-type", "")
             raise ProviderError("Demasiadas redirecciones en una fuente.")
 
-    async def page(self, url):
+    async def sitemap(self, url):
+        return await self.page(url, allow_xml=True)
+
+    async def page(self, url, allow_xml=False):
         await self.validate(url)
         cached = self.db.cache_get("page:v2:" + url)
         if cached: return cached
@@ -157,8 +161,8 @@ class WebFetcher:
         if not self.robots[origin].can_fetch("EquityScout", url):
             raise ProviderError("La fuente no permite leer esta página según robots.txt.")
         self.pages += 1
-        status, html, final_url, content_type = await self.request(url, 2000000)
-        if status != 200 or "html" not in content_type:
+        status, html, final_url, content_type = await self.request(url, self.max_bytes)
+        if status != 200 or not ("html" in content_type or allow_xml and "xml" in content_type):
             raise ProviderError("Fuente omitida: no es una página HTML accesible.")
         # A redirect to another origin must also have a permissive robots policy.
         final_origin = urlparse(final_url).scheme + "://" + urlparse(final_url).netloc

@@ -196,6 +196,10 @@ class ContinuousScanner:
                     previous_id = stream.get('last_run_id') or config.get('parent_run_id')
                     if config.get('autopilot') and self.autopilot:
                         keywords, queries = self.autopilot.web_batch()
+                        if not queries:
+                            stream.update(status='waiting', reason='Consultas recorridas. Esperando nuevas búsquedas de Qwen; el rastreo sin créditos continúa por separado.', next_at=(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat())
+                            self.persist()
+                            continue
                     elif previous_id:
                         batch = prepare_next_batch(self.db, previous_id)
                         if batch['exhausted']:
