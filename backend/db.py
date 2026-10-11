@@ -1,4 +1,7 @@
+import copy
 import hashlib
+import threading
+import time
 import json
 import sqlite3
 from contextlib import contextmanager
@@ -45,7 +48,7 @@ CREATE TABLE IF NOT EXISTS credits (
 def unique(items):
     seen, result = set(), []
     for item in items:
-        token = json.dumps(item, sort_keys=True, ensure_ascii=False)
+        token = item if isinstance(item, (str, int, float, bool, type(None))) else json.dumps(item, sort_keys=True, ensure_ascii=False)
         if token not in seen:
             result.append(item); seen.add(token)
     return result
@@ -75,6 +78,10 @@ def merge_data(old, new, fields, override=False):
 class Database:
     def __init__(self, filename):
         self.filename = str(filename)
+        # Every write goes through connect(); a write bumps the version and invalidates the contact list cache.
+        self.version = 0
+        self._contacts_cache = None
+        self._cache_lock = threading.Lock()
 
     @contextmanager
     def connect(self):
@@ -84,6 +91,7 @@ class Database:
         try:
             yield con
             con.commit()
+            if con.total_changes: self.version += 1
         except BaseException:
             con.rollback()
             raise
@@ -108,6 +116,14 @@ class Database:
             row = con.execute("SELECT * FROM firms WHERE domain=? LIMIT 1", (domain,)).fetchone() if domain else None
             if row is None:
                 row = con.execute("SELECT * FROM firms WHERE name_key=? AND (domain='' OR ?='') LIMIT 1", (identity(name), domain)).fetchone()
+            if row is None and domain:
+                # A directory or news copy of a firm that already has its own site (or the reverse) is the same firm.
+                from .dedup import firm_key, own_domain
+                for candidate in con.execute("SELECT * FROM firms").fetchall():
+                    if firm_key(candidate["name"]) == firm_key(name) and own_domain(name, domain) != own_domain(candidate["name"], candidate["domain"]):
+                        row = candidate
+                        if not own_domain(name, domain): domain = candidate["domain"]
+                        break
             if row:
                 old = json.loads(row["data"])
                 merged = merge_data(old, data, ["country", "employees_min", "employees_max", "equity", "analysis"], override)
@@ -163,6 +179,19 @@ class Database:
             return cursor.lastrowid, True
 
     def contacts(self, contact_id=None, contact_uuids=None):
+        if contact_id is None and contact_uuids is None:
+            # The full list is rebuilt only after a write (or 30 s, for edits made outside this process).
+            with self._cache_lock:
+                cached = self._contacts_cache
+                if cached and cached[0] == self.version and time.monotonic() - cached[1] < 30:
+                    return copy.deepcopy(cached[2])
+                version = self.version
+                result = self._build_contacts(None, None)
+                self._contacts_cache = (version, time.monotonic(), result)
+                return copy.deepcopy(result)
+        return self._build_contacts(contact_id, contact_uuids)
+
+    def _build_contacts(self, contact_id, contact_uuids):
         if contact_uuids is not None and not contact_uuids: return []
         where = " WHERE c.id=?" if contact_id is not None else " WHERE c.uuid IN (" + ",".join("?" for _ in contact_uuids) + ")" if contact_uuids is not None else ""
         args = (contact_id,) if contact_id is not None else tuple(contact_uuids) if contact_uuids is not None else ()

@@ -6,7 +6,7 @@ from .crm_models import ApolloSearchInput
 from .db import ACTIVE
 from .domain import now
 
-SOURCES = ('web', 'public', 'apollo')
+SOURCES = ('web', 'public', 'signals', 'apollo')
 
 
 class ContinuousScanner:
@@ -17,6 +17,7 @@ class ContinuousScanner:
         self.streams = crm.setting('continuous_scanning', {})
         self.task = None
         self.previous = None
+        self.autopilot = None
         for source in SOURCES:
             self.streams.setdefault(source, {'enabled': False, 'status': 'idle', 'reason': '', 'lots': 0})
 
@@ -68,17 +69,27 @@ class ContinuousScanner:
         await self.tick();self.wake()
         return self.snapshot()
 
+    async def start_signals(self,body):
+        if not self.runner.settings.api_key:raise ValueError('Conecta Tavily para encontrar publicaciones.')
+        if self.db.credits_used(self.runner.settings.account)>=self.runner.settings.monthly_limit:raise ValueError('Cuota gratuita de búsqueda agotada.')
+        self.activate('signals',{**body.model_dump(),'after_id':0})
+        await self.tick();self.wake()
+        return self.snapshot()
+
     async def resume(self, source):
         stream = self.streams[source]
         if stream.get('enabled'):
             return self.snapshot()
-        if source == 'web' and not self.runner.settings.api_key:
+        if source in ('web','signals') and not self.runner.settings.api_key:
             raise ValueError('Configura Tavily antes de continuar.')
+        if source in ('web','signals') and self.db.credits_used(self.runner.settings.account)>=self.runner.settings.monthly_limit:
+            raise ValueError('Cuota gratuita de búsqueda agotada. Los resultados se conservan.')
         if source == 'apollo' and not self.apollo.provider.settings.apollo_key:
             raise ValueError('Configura la clave de Apollo antes de continuar.')
         if source=='web' and stream.get('last_run_id') and person_search_root(self.db,stream['last_run_id']):
             seed=general_web_seed(self.db,stream['last_run_id'])
             stream.update(config={'keywords':seed['keywords'],'queries':seed['plan'],'use_ollama':False},last_run_id=seed['id'],processed_run_id=None)
+        if source=='signals' and not stream.get('config'):stream['config']={'firm_ids':[],'continuous':True,'days':90,'after_id':0}
         if source=='public' and not stream.get('config'): stream['config']={'contact_ids':[],'continuous':True,'after_id':0}
         if not stream.get('config'):
             with self.db.connect() as con:
@@ -142,6 +153,10 @@ class ContinuousScanner:
                 stream['lots'] += 1
                 if run['status'] != 'completed':
                     stream.update(enabled=False, status=run['status'], reason=run['errors'][-1] if run['errors'] else 'Escaneo interrumpido; puedes continuarlo expresamente.')
+                elif source == 'signals':
+                    ids=self.crm.run_metadata(rid).get('firm_ids',[])
+                    if ids:stream['config']['after_id']=max(ids)
+                    stream.update(status='waiting',reason='Preparando las siguientes gestoras.',next_at=(datetime.now(timezone.utc)+timedelta(seconds=self.interval)).isoformat())
                 elif source == 'public':
                     ids=self.crm.run_metadata(rid).get('contact_ids',[])
                     if ids: stream['config']['after_id']=max(ids)
@@ -165,8 +180,8 @@ class ContinuousScanner:
             return
         order = list(SOURCES)
         if self.previous in order:
-            order.remove(self.previous)
-            order.append(self.previous)
+            offset = order.index(self.previous) + 1
+            order = order[offset:] + order[:offset]
         for source in order:
             stream = self.streams[source]
             if not stream.get('enabled') or datetime.fromisoformat(stream['next_at']) > datetime.now(timezone.utc):
@@ -179,7 +194,9 @@ class ContinuousScanner:
                         self.persist()
                         continue
                     previous_id = stream.get('last_run_id') or config.get('parent_run_id')
-                    if previous_id:
+                    if config.get('autopilot') and self.autopilot:
+                        keywords, queries = self.autopilot.web_batch()
+                    elif previous_id:
                         batch = prepare_next_batch(self.db, previous_id)
                         if batch['exhausted']:
                             self.defer_cycle(source, 'Consultas recorridas. Se volverán a comprobar dentro de siete días; puedes cambiar las palabras clave ahora.')
@@ -188,10 +205,31 @@ class ContinuousScanner:
                     else:
                         keywords, queries = config['keywords'], config['queries']
                     rid = self.runner.start(keywords, queries, {'continuous': True, 'use_ollama': config.get('use_ollama', False), 'parent_run_id': previous_id})
+                elif source=='signals':
+                    if self.db.credits_used(self.runner.settings.account)>=self.runner.settings.monthly_limit:
+                        stream.update(enabled=False,status='quota_exhausted',reason='Cuota gratuita de búsqueda agotada. Se conservan las señales.');self.persist();continue
+                    from .signals import eligible_firms
+                    firms=eligible_firms(self.crm,config.get('firm_ids'))
+                    ids=[f['id'] for f in firms if f['id']>config.get('after_id',0)][:4]
+                    if config.get('autopilot') and self.autopilot:
+                        ids=self.autopilot.signal_firms()
+                        if not ids:
+                            stream.update(status='waiting',reason='Gestoras prioritarias revisadas. Se volverán a comprobar en unas horas.',next_at=(datetime.now(timezone.utc)+timedelta(hours=6)).isoformat());self.persist();continue
+                    if not ids:
+                        if not config.get('continuous',True):stream.update(enabled=False,status='completed',reason='Gestoras revisadas. Las señales están guardadas.')
+                        else:
+                            config['after_id']=0
+                            stream.update(status='waiting',reason='Gestoras recorridas. Volverá a comprobar publicaciones dentro de 24 horas.',next_at=(datetime.now(timezone.utc)+timedelta(days=1)).isoformat())
+                        self.persist();continue
+                    rid=self.runner.start_signals(ids,config.get('days',90))
                 elif source=='public':
                     wanted=config.get('contact_ids',[])
                     candidates=[c for c in self.db.contacts() if not c['blocked'] and c['id']>config.get('after_id',0) and (not wanted or c['id'] in wanted)]
                     ids=sorted(c['id'] for c in candidates)[:4]
+                    if config.get('autopilot') and self.autopilot:
+                        ids=self.autopilot.public_contacts()
+                        if not ids:
+                            stream.update(status='waiting',reason='Contactos prioritarios revisados. Se comprobarán las nuevas fichas en diez minutos.',next_at=(datetime.now(timezone.utc)+timedelta(minutes=10)).isoformat());self.persist();continue
                     if not ids:
                         if not config.get('continuous',True): stream.update(enabled=False,status='completed',reason='Datos públicos revisados. Los resultados se conservan.')
                         else:

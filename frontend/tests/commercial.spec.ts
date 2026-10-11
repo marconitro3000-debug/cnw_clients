@@ -118,7 +118,7 @@ test('both continuous scanners have their own page and stopping one preserves th
   await page.route('**/api/scanning/public/stop',route=>{scans.public.enabled=false;scans.public.status='stopped';return route.fulfill({json:scans})})
   await page.goto('/')
   await page.locator('.sidebar').getByRole('button',{name:'Búsquedas',exact:true}).click()
-  await expect(page.locator('.scan-controls .scan-card')).toHaveCount(2)
+  await expect(page.locator('.scan-controls .scan-card')).toHaveCount(3)
   await expect(page.locator('.crm-workspace')).toHaveCount(0)
   await expect(page.locator('.sidebar').getByRole('button',{name:'Screener',exact:true})).toHaveCount(0)
   await page.getByRole('button',{name:'Detener web',exact:true}).click()

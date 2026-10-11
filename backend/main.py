@@ -19,6 +19,22 @@ def csv_cell(value):
     if text.lstrip().startswith(("=", "+", "-", "@", "\t", "\r")): text = "'" + text
     return text
 
+def compact_evidence(items, quote_limit=300, limit=25):
+    """Listing payloads keep the latest observation per field and source, with short quotes."""
+    seen = {}
+    for item in items or []:
+        if not isinstance(item, dict): continue
+        key = (item.get("field"), item.get("url"))
+        seen.pop(key, None)
+        value = item.get("value")
+        seen[key] = {**item, "quote": str(item.get("quote") or "")[:quote_limit], "value": value[:quote_limit] if isinstance(value, str) else value}
+    return list(seen.values())[-limit:]
+
+def compact_contact(contact):
+    # Full evidence stays available from /api/contacts/{id}; lists only need a readable summary.
+    return {**contact, "evidence": compact_evidence(contact.get("evidence")),
+        "reasons": [{**r, "evidence": compact_evidence(r.get("evidence"))} if isinstance(r, dict) and "evidence" in r else r for r in contact.get("reasons") or []]}
+
 def select_contacts(contacts, country="", role="", min_score=0, size_min=None, size_max=None, status="qualified", q=""):
     from .domain import normalized
     filtered = []
@@ -46,11 +62,15 @@ def create_app(settings=None, provider=None, fetcher_factory=None):
         db.interrupt_runs()
         app.state.scanning.interrupt()
         crm.import_shared()
+        from .dedup import merge_obvious
+        merge_obvious(crm)
         for contact in db.contacts():
             if contact["status"] == "qualified" and not contact.get("qualified_at"): crm.set_meta(contact["id"], qualified_at=contact["created_at"])
         crm.export_shared()
         app.state.local_model.start()
+        await app.state.autopilot.startup()
         yield
+        await app.state.autopilot.shutdown()
         await app.state.scanning.shutdown()
         await runner.shutdown()
         await app.state.local_model.shutdown()
@@ -142,7 +162,7 @@ def create_app(settings=None, provider=None, fetcher_factory=None):
     @app.get("/api/contacts")
     def contacts(country: str = "", role: str = "", min_score: int = 0, size_min: int | None = None,
                  size_max: int | None = None, status: str = "qualified", q: str = ""):
-        return filtered(country, role, min_score, size_min, size_max, status, q)
+        return [compact_contact(c) for c in filtered(country, role, min_score, size_min, size_max, status, q)]
 
     @app.get("/api/stats")
     def stats():

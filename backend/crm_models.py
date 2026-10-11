@@ -100,6 +100,15 @@ class CRMContactInput(BaseModel):
         if v and not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+',v): raise ValueError('Correo inválido.')
         return v
 
+Answer = Literal['yes','no'] | None
+class QualificationInput(BaseModel):
+    change: Answer = None
+    timing: Answer = None
+    decision: Answer = None
+
+class SegmentInput(BaseModel):
+    segment: Literal['quant','hedge_fund','boutique_equity','thematic','wealth','multi_asset','private_markets','unclassified'] | None = None
+
 class ResolveInput(BaseModel):
     choice: Literal['local','incoming']
 class OllamaInput(BaseModel):
@@ -116,3 +125,11 @@ class NextBatchInput(BaseModel):
 class PublicSearchInput(BaseModel):
     contact_ids: list[int] = Field(default_factory=list,max_length=50)
     continuous: bool = True
+
+class SignalSearchInput(BaseModel):
+    firm_ids: list[int] = Field(default_factory=list,max_length=1000)
+    days: int = Field(default=90,ge=7,le=365)
+    continuous: bool = True
+
+class SignalReviewInput(BaseModel):
+    decision: Literal['confirmed','rejected','pending']

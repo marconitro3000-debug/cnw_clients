@@ -6,11 +6,13 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from dotenv import set_key
 from .crm import CRM, CHANNELS, STAGES
-from .crm_models import (PublicSearchInput, InteractionInput, ScriptInput, ApolloSettingsInput, ApolloSearchInput, ApolloEnrichInput,
-    CandidateAcceptInput, CSVPreviewInput, CSVImportInput, CRMContactInput, ResolveInput, OllamaInput)
+from .crm_models import (SignalSearchInput, SignalReviewInput, PublicSearchInput, InteractionInput, ScriptInput, ApolloSettingsInput, ApolloSearchInput, ApolloEnrichInput,
+    CandidateAcceptInput, CSVPreviewInput, CSVImportInput, CRMContactInput, QualificationInput, SegmentInput, ResolveInput, OllamaInput)
 from .domain import EUROPE, expand_queries, evidence, identity, now, normalized, linkedin_url, safe_url
 from .enrichment import Apollo, ApolloRunner, Ollama, apollo_into_contact, csv_preview, COUNTRY_NAMES
 from .extract import valid_firm_name
+from .opportunity import STATUSES
+from .segments import LABELS as SEGMENT_LABELS, firm_segments, groups as segment_groups, set_segment
 from .providers import ROOT, ProviderError
 
 def install_extensions(app,db,settings,runner):
@@ -18,11 +20,15 @@ def install_extensions(app,db,settings,runner):
     directory=settings.shared_path or (str(ROOT/'shared-data') if Path(settings.database_path).resolve()==(ROOT/'data'/'scout.sqlite').resolve() else str(Path(settings.database_path).with_suffix('.shared')))
     crm=CRM(db,directory); provider=Apollo(settings,crm); apollo_runner=ApolloRunner(runner,provider,crm); ollama=Ollama(crm); runner.ollama=ollama
     from .local_model import LocalModel
-    runner.local_model=LocalModel(enabled=Path(settings.database_path).resolve()==(ROOT/'data'/'scout.sqlite').resolve())
+    # Keep local inference disabled so starting the app does not load the model into RAM.
+    runner.local_model=LocalModel(enabled=False)
     app.state.local_model=runner.local_model
     from .continuous import ContinuousScanner
     scanning=ContinuousScanner(runner,apollo_runner,crm)
     app.state.scanning=scanning
+    from .autopilot import Autopilot, is_junk
+    autopilot=Autopilot(crm,scanning,runner.local_model)
+    app.state.autopilot=autopilot
     app.state.crm,app.state.apollo,app.state.ollama=crm,apollo_runner,ollama
     router=APIRouter(prefix='/api')
 
@@ -39,14 +45,20 @@ def install_extensions(app,db,settings,runner):
     def guard():
         latest=db.latest_run()
         if latest and latest['status'] in ('queued','running','stopping'): raise HTTPException(409,'Espera a que termine el escaneo.')
-    def filtered(q='',status='all',stage='',country='',role='',min_score=0,size_min=None,size_max=None,channel='',owner='',letter='',view='all',reachability='all'):
+    def filtered(q='',status='all',stage='',country='',role='',min_score=0,size_min=None,size_max=None,channel='',owner='',letter='',view='all',reachability='all',signals='all',opportunity='all',sort='name',segment=''):
         from .main import select_contacts
         contacts=select_contacts(db.contacts(),country,role,min_score,size_min,size_max,status,q)
+        sectors=firm_segments(crm,{c['firm_id'] for c in contacts})
+        for c in contacts: c['segment'],c['segment_label']=sectors[c['firm_id']]['segment'],sectors[c['firm_id']]['label']
         def initial(name):
             first=name.strip()[0].upper() if name.strip() else '#'
             return first if first=='Ñ' else unicodedata.normalize('NFD',first)[0]
         result=[]
         for c in contacts:
+            if signals=='recent' and not c.get('recent_signal_count'):continue
+            entries=[e for e in c.get('business_signals',[]) if e['review']!='rejected']
+            if signals=='event_driven' and not any(e['kind']=='event_driven' and e['recency'] in ('recent','estimated') for e in entries):continue
+            if signals=='review' and not any(e['review'] in ('pending','detected') for e in entries):continue
             if reachability=='reachable' and not c['reachable'] or reachability=='missing' and c['reachable']: continue
             if stage and c['stage']!=stage: continue
             if owner and c['owner']!=owner: continue
@@ -55,20 +67,28 @@ def install_extensions(app,db,settings,runner):
             if view=='pending' and c['stage']!='pending': continue
             if view=='followups' and (not c['follow_up'] or c['stage'] in ('customer','discarded')): continue
             if view=='burned' and not c['blocked']: continue
+            if opportunity!='all' and c['opportunity_status']!=opportunity: continue
+            if (view=='junk')!=is_junk(c): continue
+            if segment and c['segment']!=segment: continue
             result.append(c)
-        return sorted(result,key=lambda c:normalized(c['name'].replace('ñ','nzz').replace('Ñ','Nzz')))
+        result.sort(key=lambda c:normalized(c['name'].replace('ñ','nzz').replace('Ñ','Nzz')))
+        # Stable sort keeps alphabetical order among equal scores.
+        if sort=='opportunity': result.sort(key=lambda c:(-c['opportunity_score'],-c['score']))
+        return result
 
     @router.get('/crm/contacts')
-    def contacts(page:int=Query(default=1,ge=1),page_size:int=Query(default=50,ge=1,le=50),q:str='',status:str='all',stage:str='',country:str='',role:str='',min_score:int=0,size_min:int|None=None,size_max:int|None=None,channel:str='',owner:str='',letter:str='',view:str='all',reachability:str='all'):
-        if status not in ('all','qualified','review','excluded') or stage and stage not in STAGES or channel and channel not in CHANNELS or view not in ('all','pending','followups','burned'): raise HTTPException(422,'Filtro no válido.')
-        if reachability not in ('all','reachable','missing') or not 0<=min_score<=100: raise HTTPException(422,'Filtro no válido.')
-        rows=filtered(q,status,stage,country,role,min_score,size_min,size_max,channel,owner,letter,view,reachability)
+    def contacts(page:int=Query(default=1,ge=1),page_size:int=Query(default=50,ge=1,le=50),q:str='',status:str='all',stage:str='',country:str='',role:str='',min_score:int=0,size_min:int|None=None,size_max:int|None=None,channel:str='',owner:str='',letter:str='',view:str='all',reachability:str='all',signals:str='all',opportunity:str='all',sort:str='name',segment:str=''):
+        if status not in ('all','qualified','review','excluded') or stage and stage not in STAGES or channel and channel not in CHANNELS or view not in ('all','pending','followups','burned','junk'): raise HTTPException(422,'Filtro no válido.')
+        if signals not in ('all','recent','review','event_driven') or reachability not in ('all','reachable','missing') or not 0<=min_score<=100: raise HTTPException(422,'Filtro no válido.')
+        if opportunity not in ('all',*STATUSES) or sort not in ('name','opportunity') or segment and segment not in SEGMENT_LABELS: raise HTTPException(422,'Filtro no válido.')
+        rows=filtered(q,status,stage,country,role,min_score,size_min,size_max,channel,owner,letter,view,reachability,signals,opportunity,sort,segment)
         start=(page-1)*page_size
-        return {'items':rows[start:start+page_size],'total':len(rows),'page':page,'page_size':page_size}
+        from .main import compact_contact
+        return {'items':[compact_contact(r) for r in rows[start:start+page_size]],'total':len(rows),'page':page,'page_size':page_size}
 
     @router.get('/crm/contacts/export')
-    def export(q:str='',status:str='all',stage:str='',country:str='',role:str='',min_score:int=0,size_min:int|None=None,size_max:int|None=None,channel:str='',owner:str='',letter:str='',view:str='all',reachability:str='all'):
-        return Response(crm.contact_csv(filtered(q,status,stage,country,role,min_score,size_min,size_max,channel,owner,letter,view,reachability)),media_type='text/csv; charset=utf-8',headers={'Content-Disposition':'attachment; filename="agenda-equity-scout.csv"'})
+    def export(q:str='',status:str='all',stage:str='',country:str='',role:str='',min_score:int=0,size_min:int|None=None,size_max:int|None=None,channel:str='',owner:str='',letter:str='',view:str='all',reachability:str='all',signals:str='all',opportunity:str='all',sort:str='name',segment:str=''):
+        return Response(crm.contact_csv(filtered(q,status,stage,country,role,min_score,size_min,size_max,channel,owner,letter,view,reachability,signals,opportunity,sort,segment)),media_type='text/csv; charset=utf-8',headers={'Content-Disposition':'attachment; filename="agenda-equity-scout.csv"'})
 
     @router.patch('/crm/contacts/{cid}')
     def metadata(cid:int,body:CRMContactInput):
@@ -79,6 +99,36 @@ def install_extensions(app,db,settings,runner):
             else: changes['phones']=list({p['number']:p for p in [{'number':body.phone,'type':'manual','status':'manual','source':'Revisión manual','observed_at':now()}]+previous[1:]}.values())
         else: changes['phones']=[]
         crm.set_meta(cid,**changes); return db.contact(cid)
+
+    @router.put('/crm/contacts/{cid}/qualification')
+    def qualification(cid:int,body:QualificationInput):
+        found(cid)
+        crm.set_meta(cid,qualification=body.model_dump()|{'updated_at':now(),'author':crm.setting('actor','Marco')})
+        crm.export_shared(); return db.contact(cid)
+
+    @router.get('/autopilot')
+    async def autopilot_status(): return await autopilot.status()
+    @router.post('/autopilot')
+    async def autopilot_switch(body:dict):
+        try:
+            if body.get('enabled'): await autopilot.enable()
+            else: autopilot.disable()
+        except (ValueError,RuntimeError) as e: raise HTTPException(409,str(e)) from None
+        return await autopilot.status()
+    @router.put('/crm/contacts/{cid}/quality')
+    def quality(cid:int,body:dict):
+        found(cid)
+        if body.get('status') not in ('ok','junk'): raise HTTPException(422,'Estado no válido.')
+        crm.set_meta(cid,quality={'status':body['status'],'reason':'Revisado a mano','by':crm.setting('actor','Marco'),'at':now()})
+        crm.export_shared(); return db.contact(cid)
+
+    @router.get('/segments')
+    def segments(): return {'groups':segment_groups(crm),'labels':SEGMENT_LABELS}
+    @router.put('/firms/{fid}/segment')
+    def segment_edit(fid:int,body:SegmentInput):
+        try: set_segment(crm,fid,body.segment)
+        except LookupError as e: raise HTTPException(404,str(e)) from None
+        return firm_segments(crm,{fid})[fid]
 
     @router.get('/crm/contacts/{cid}/interactions')
     def history(cid:int): found(cid); return crm.history(cid)
@@ -180,16 +230,44 @@ def install_extensions(app,db,settings,runner):
         try: return await scanning.start_public(body)
         except RuntimeError as e: raise HTTPException(409,str(e)) from None
 
+    @router.post('/signals/searches',status_code=202)
+    async def signal_search(body:SignalSearchInput):
+        try:return await scanning.start_signals(body)
+        except ValueError as e:raise HTTPException(400,str(e)) from None
+        except RuntimeError as e:raise HTTPException(409,str(e)) from None
+
+    @router.get('/signals')
+    def signal_list(days:int=Query(default=90,ge=7,le=365),firm_id:int|None=None,kind:str='',recent_only:bool=True,page:int=Query(default=1,ge=1)):
+        from .signals import KINDS,list_signals
+        if kind and kind not in KINDS:raise HTTPException(422,'Tipo de señal no válido.')
+        from .signals import eligible_firms
+        # Only news about the firms being prospected; signals kept from other firms stay stored but hidden.
+        targets={f['id'] for f in eligible_firms(crm)}
+        rows=[r for r in list_signals(crm,days,firm_id,kind,recent_only) if r['firm_id'] in targets]
+        return {'items':rows[(page-1)*50:page*50],'total':len(rows),'page':page}
+
+    @router.get('/signals/targets')
+    def signal_targets():
+        from .signals import eligible_firms,KINDS
+        return {'firms':[{'id':f['id'],'name':f['name'],'domain':f['domain']} for f in eligible_firms(crm)],'kinds':{k:v[0] for k,v in KINDS.items()}}
+
+    @router.post('/signals/{signal_uuid}/review')
+    def signal_review(signal_uuid:str,body:SignalReviewInput):
+        from .signals import review_signal
+        try:return review_signal(crm,signal_uuid,body.decision)
+        except ValueError as e:raise HTTPException(422,str(e)) from None
+        except LookupError as e:raise HTTPException(404,str(e)) from None
+
     @router.get('/scanning')
     def scanning_status(): return scanning.snapshot()
     @router.post('/scanning/{source}/resume')
     async def scanning_resume(source:str):
-        if source not in ('web','public','apollo'): raise HTTPException(422,'Escaneo no válido.')
+        if source not in ('web','public','signals','apollo'): raise HTTPException(422,'Escaneo no válido.')
         try: return await scanning.resume(source)
         except ValueError as e: raise HTTPException(400,str(e)) from None
     @router.post('/scanning/{source}/stop')
     async def scanning_stop(source:str):
-        if source not in ('web','public','apollo','all'): raise HTTPException(422,'Escaneo no válido.')
+        if source not in ('web','public','signals','apollo','all'): raise HTTPException(422,'Escaneo no válido.')
         return scanning.stop(None if source=='all' else source)
 
     @router.post('/apollo/enrich',status_code=202)

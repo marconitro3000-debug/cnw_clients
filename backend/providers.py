@@ -1,5 +1,8 @@
 import asyncio
 import hashlib
+import json
+import re
+from datetime import datetime, timedelta, timezone
 import ipaddress
 import os
 import socket
@@ -51,8 +54,16 @@ class Tavily:
     def __init__(self, settings, db, transport=None):
         self.settings, self.db, self.transport = settings, db, transport
 
-    async def search(self, query, run_id):
+    async def search_signals(self, query, run_id, days=90):
+        today=datetime.now(timezone.utc).date()
+        options={"include_published_date":True,"start_date":(today-timedelta(days=days)).isoformat(),"end_date":today.isoformat()}
+        scoped=re.search(r'(?:^|\s)site:([a-zA-Z0-9.-]+)',query)
+        if scoped:options['include_domains']=[scoped.group(1)]
+        return await self.search(query,run_id,options)
+
+    async def search(self, query, run_id, options=None):
         key = "search:basic:v1:" + self.settings.account + ":" + query.strip()
+        if options: key += ":" + hashlib.sha256(json.dumps(options,sort_keys=True).encode()).hexdigest()
         cached = self.db.cache_get(key)
         if cached is not None:
             return cached, True
@@ -66,7 +77,7 @@ class Tavily:
                     headers={"Authorization": "Bearer " + self.settings.api_key},
                     json={"query": query, "search_depth": "basic", "max_results": 5,
                           "topic": "general", "auto_parameters": False, "include_answer": False,
-                          "include_raw_content": False, "include_images": False, "include_usage": True})
+                          "include_raw_content": False, "include_images": False, "include_usage": True, **(options or {})})
         except httpx.HTTPError:
             raise ProviderError("No se pudo conectar con Tavily. Comprueba tu conexión y vuelve a intentarlo.") from None
         if response.status_code in (402, 432, 433):

@@ -56,4 +56,4 @@ async def execute_public(runner,rid):
         db.update_run(rid,status='interrupted',finished_at=now());raise
     except Exception:
         db.run_error(rid,'Error al completar datos públicos. Se conservan los resultados.');db.update_run(rid,status='failed',finished_at=now())
-    finally: crm.export_shared()
+    finally: await asyncio.to_thread(crm.export_shared)

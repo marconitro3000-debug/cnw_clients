@@ -301,7 +301,7 @@ class ApolloRunner:
             db.run_error(rid,'Error al procesar Apollo; los datos guardados se conservan.'); db.update_run(rid,status='failed',finished_at=now())
         finally:
             self.crm.set_run_metadata(rid,omitted=omitted,phones_pending=len(self.crm.setting('apollo_pending',[])))
-            self.crm.export_shared()
+            await asyncio.to_thread(self.crm.export_shared)
     def pending(self,request_id,cid,approved=True):
         try: request_id=str(int(request_id))
         except (ValueError,TypeError): raise ProviderError('Identificador de solicitud de teléfono inválido.') from None

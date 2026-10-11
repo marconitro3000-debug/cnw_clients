@@ -6,6 +6,7 @@ export type Contact = {
   linkedin_url: string | null; photo_url: string | null; photo_origin?:string; score: number
   priority: 'high' | 'medium' | 'low'; status: 'qualified' | 'review' | 'excluded'
   reasons: Reason[]; evidence: Evidence[]; issues: string[]; missing: string[]
+  business_signals?:BusinessSignal[]; recent_signal_count?:number
   created_at: string; updated_at: string
 }
 export type Query = { text: string; phase: 'firms' | 'people' }
@@ -37,7 +38,7 @@ export const statusLabel: Record<string, string> = {
 }
 export const issueLabel = (issue: string) => ({
   ai_review: 'Propuesta de IA local: revisa los datos y sus fuentes.',
-  possible_duplicate: 'Posible coincidencia de identidad: revisa el perfil.',
+  possible_duplicate: 'Encontrado también en otra fuente sin LinkedIn: confirma que es la misma persona (no es un duplicado en la agenda).',
   association_unverified: 'La vinculación actual con la gestora no está verificada.',
   role_unverified: 'El cargo actual necesita revisión.',
 }[issue] || (issue.startsWith('conflict:') ? 'Fuentes contradictorias: ' + ({
@@ -59,16 +60,22 @@ export function matches(c: Contact, f: { status: string; q: string; country: str
 
 export const stageLabels: Record<string,string> = {pending:'Pendiente',contacted:'Contactado',no_response:'Sin respuesta',replied:'Respondió',interested:'Interesado',demo:'Demo / reunión',customer:'Cliente',discarded:'Descartado'}
 export const channelLabels: Record<string,string> = {call:'Llamada',linkedin:'LinkedIn',email:'Correo',note:'Comentario'}
-export type CRMContact = Contact & {uuid:string;stage:string;blocked:boolean;owner:string;email:string|null;email_status:string;phones:{number:string;type:string;status:string;source:string;observed_at:string}[];apollo_id:string|null;last_interaction:string|null;follow_up:string|null;notes:string;interaction_count:number;reachable?:boolean;contact_sources?:Evidence[];email_candidates?:string[]}
+export type CRMContact = Contact & {uuid:string;stage:string;blocked:boolean;owner:string;email:string|null;email_status:string;phones:{number:string;type:string;status:string;source:string;observed_at:string}[];apollo_id:string|null;last_interaction:string|null;follow_up:string|null;notes:string;interaction_count:number;reachable?:boolean;contact_sources?:Evidence[];email_candidates?:string[];opportunity_score:number;opportunity_status:OpportunityStatus;opportunity_reasons:(Omit<Reason,'evidence'>&{answer:Answer})[];qualification:Qualification;segment?:string;segment_label?:string;quality?:{status:'ok'|'junk'|'doubtful_firm';reason:string;by:string;at:string}|null}
+export type Answer='yes'|'no'|null
+export type Qualification={change:Answer;timing:Answer;decision:Answer;updated_at?:string|null;author?:string|null}
+export type OpportunityStatus='target'|'later'|'pending'|'unwilling'
+export const opportunityLabels:Record<OpportunityStatus,string>={target:'Cliente objetivo',later:'Más adelante',pending:'Sin cualificar',unwilling:'No quiere cambiar'}
 export type Interaction = {uuid:string;contact_uuid:string;author:string;channel:string;result:string|null;comment:string;occurred_at:string;created_at:string;follow_up:string|null;script_uuid:string|null;script_version:number|null;supersedes:string|null;clear_follow_up?:boolean}
 export type Script = {uuid:string;title:string;channel:string;text:string;archived:boolean;versions:{version:number;title:string;channel:string;text:string;created_at:string}[];created_at:string;updated_at:string}
 export type ScriptStat = {script_uuid:string;version:number;channel:string;title:string;approached:number;responses:number;interested:number;rejected:number;demos:number;conversion:number}
 export type Candidate = {id:string;name:string;partial:boolean;company:string;role:string;domain:string;country:string;linkedin_url:string|null;photo_url:string|null;existing_id:number|null}
-export type ScoutRun = Run & {provider?:string;new_contacts?:number;duplicates?:number;omitted?:number;review_contacts?:number;reserved_credits?:number;phones_pending?:number;candidates?:Candidate[];mode?:string}
+export type ScoutRun = Run & {provider?:string;new_contacts?:number;duplicates?:number;omitted?:number;review_contacts?:number;reserved_credits?:number;phones_pending?:number;signals_found?:number;new_signals?:number;candidates?:Candidate[];mode?:string}
 export type SharedStatus = {error:string;directory:string;actor:string;conflicts:{uuid:string;kind:string;entity_uuid:string;data:{incoming:unknown;local:unknown}}[]}
 export type OllamaStatus = {enabled:boolean;model:string;reachable:boolean;ready:boolean;models:string[]}
 
 export type ScanStream = {enabled:boolean;status:string;reason:string;lots:number;last_run_id?:number|null;next_at?:string}
-export type ScanningState = {web:ScanStream;apollo:ScanStream;public?:ScanStream}
+export type ScanningState = {web:ScanStream;apollo:ScanStream;public?:ScanStream;signals?:ScanStream}
 
 export type LocalModelStatus = {installed:boolean;ready:boolean;model:string;error:string}
+
+export type BusinessSignal={uuid:string;firm_id:number;firm_uuid:string;company:string;domain:string;kind:string;label:string;title:string;quote:string;source_url:string;published_at:string|null;event_at:string|null;date_basis:string;observed_at:string;method:string;review:string;recency:string;reviews:{decision:string;author:string;at:string}[]}

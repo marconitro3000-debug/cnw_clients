@@ -1,0 +1,10 @@
+/* Dark mode inverts the light palette as a whole so every page and component follows it; photos are inverted back. */
+/* The filter sits on the root element: on any other ancestor it would turn the fixed sidebar into a scrolling one. */
+html[data-theme="dark"]{background:#fffcf5;color-scheme:dark;filter:invert(.9) hue-rotate(180deg)}
+html[data-theme="dark"] body img,html[data-theme="dark"] body video{filter:invert(1) hue-rotate(180deg)}
+html[data-theme="dark"] dialog::backdrop{background:#000a}
+/* Modal dialogs render in the browser's top layer, outside the root filter. */
+html[data-theme="dark"] dialog{filter:invert(.9) hue-rotate(180deg)}
+/* The fixed sidebar must stay whole on short windows: compact it and let it scroll on its own. */
+.sidebar{overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
+@media(min-width:651px) and (max-height:900px){.sidebar .workspace{margin:18px 0}.sidebar .nav-item{padding:9px 12px;margin-bottom:2px}.sidebar-target{margin-top:16px;padding-top:14px}.sidebar-target h3{font-size:16px;margin-top:6px}.sidebar-target p{line-height:1.6;margin-top:4px}.sidebar-bottom{padding-top:14px}}

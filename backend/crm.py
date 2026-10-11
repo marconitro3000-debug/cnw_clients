@@ -20,7 +20,8 @@ def cell(value):
     return "'" + text if text.lstrip().startswith(('=','+','-','@')) else text
 
 def csv_text(headers, rows):
-    out = io.StringIO(newline=''); writer = csv.writer(out, delimiter=';')
+    # Text-mode writes translate \n to \r\n on Windows; \r\n here would become \r\r\n (blank rows in Excel).
+    out = io.StringIO(newline=''); writer = csv.writer(out, delimiter=';', lineterminator='\n')
     writer.writerow(headers)
     for row in rows: writer.writerow([cell(v) for v in row])
     return '\ufeff' + out.getvalue()
@@ -37,9 +38,12 @@ class CRM:
                     con.execute('ALTER TABLE '+table+' ADD COLUMN uuid TEXT')
                 con.execute('CREATE UNIQUE INDEX IF NOT EXISTS '+table+'_uuid ON '+table+'(uuid)')
             con.executescript('''
+            CREATE TABLE IF NOT EXISTS business_signals (uuid TEXT PRIMARY KEY, firm_uuid TEXT NOT NULL, data TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS business_signal_firm ON business_signals(firm_uuid);
             CREATE TABLE IF NOT EXISTS contact_crm (contact_id INTEGER PRIMARY KEY REFERENCES contacts(id), data TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS interactions (uuid TEXT PRIMARY KEY, contact_uuid TEXT NOT NULL, data TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS scripts (uuid TEXT PRIMARY KEY, data TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS firm_segments (firm_uuid TEXT PRIMARY KEY, data TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS observations (contact_uuid TEXT NOT NULL, run_uuid TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(contact_uuid,run_uuid));
             CREATE TABLE IF NOT EXISTS run_meta (run_id INTEGER PRIMARY KEY REFERENCES runs(id), data TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS local_settings (key TEXT PRIMARY KEY, data TEXT NOT NULL);
@@ -114,6 +118,10 @@ class CRM:
             ids={r['id']:r['uuid'] for r in con.execute('SELECT id,uuid FROM contacts'+where,keys if limited else [])}
             where_meta=where.replace('WHERE id','WHERE contact_id')
             meta={r[0]:json.loads(r[1]) for r in con.execute('SELECT contact_id,data FROM contact_crm'+where_meta,keys if limited else [])}
+        from .signals import list_signals
+        from .opportunity import opportunity
+        signals={}
+        for signal in list_signals(self):signals.setdefault(signal["firm_id"],[]).append(signal)
         groups={}
         for e in self.all_events(contact_uuids=list(ids.values()) if limited else None): groups.setdefault(e['contact_uuid'],[]).append(e)
         for c in contacts:
@@ -125,8 +133,12 @@ class CRM:
                 owner=m.get('owner',''),email=m.get('email'),email_status=m.get('email_status',''),
                 phones=m.get('phones',[]),apollo_id=m.get('apollo_id'),apollo_contact_id=m.get('apollo_contact_id'),data_sources=m.get('data_sources',[]),
                 last_interaction=events[-1]['occurred_at'] if events else None,follow_up=follow,
-                interaction_count=len(events),qualified_at=m.get('qualified_at'),
+                interaction_count=len(events),qualified_at=m.get('qualified_at'),quality=m.get('quality'),public_checked_at=m.get('public_checked_at'),
                 notes=' | '.join(e['comment'] for e in events if e.get('comment')),contact_sources=m.get('contact_sources',[]),email_candidates=m.get('email_candidates',[]))
+            entries=signals.get(c['firm_id'],[])
+            c['business_signals']=entries[:12]
+            c['recent_signal_count']=sum(e['recency']=='recent' and e['kind']!='event_driven' and e['review']!='rejected' for e in entries)
+            c.update(opportunity(m.get('qualification'),entries))
             c['reachable']=bool(c.get('linkedin_url') or c.get('email') or c.get('phones'))
             c['photo_origin']='LinkedIn' if c.get('photo_url') and (urlparse(c['photo_url']).hostname or '').lower().removeprefix('www.').endswith('.licdn.com') else 'Fuente pública' if c.get('photo_url') else ''
         return contacts
@@ -257,11 +269,13 @@ class CRM:
     def set_run_metadata(self, run_id, **values):
         data={**self.run_metadata(run_id),**values}
         with self.db.connect() as con: con.execute('INSERT OR REPLACE INTO run_meta VALUES(?,?)',(run_id,dump(data)))
-    def run_summary(self, run):
+    def run_summary(self, run, statuses=None):
         with self.db.connect() as con: obs=[json.loads(r[0]) for r in con.execute('SELECT data FROM observations WHERE run_uuid=?',(run['uuid'],))]
         observed_ids={o['contact_uuid'] for o in obs}
+        # A precomputed uuid -> status map spares rebuilding the observed contacts once per run.
+        review=sum(statuses.get(u)=='review' for u in observed_ids) if statuses is not None else sum(c['status']=='review' for c in self.db.contacts(contact_uuids=observed_ids))
         return {**self.run_metadata(run['id']),'new_contacts':sum(e['new'] for e in obs),'duplicates':sum(not e['new'] for e in obs),
-                'review_contacts':sum(c['status']=='review' for c in self.db.contacts(contact_uuids=observed_ids))}
+                'review_contacts':review}
 
     def records(self):
         self.identifiers()
@@ -270,14 +284,19 @@ class CRM:
             contacts=[dict(r) for r in con.execute('SELECT * FROM contacts')]
             runs=[dict(r) for r in con.execute('SELECT * FROM runs')]
             observations=[json.loads(r[0]) for r in con.execute('SELECT data FROM observations')]
+            signals=[json.loads(r[0]) for r in con.execute('SELECT data FROM business_signals')]
+            segments=[json.loads(r[0]) for r in con.execute('SELECT data FROM firm_segments')]
         result=[]; firm_ids={f['id']:f['uuid'] for f in firms}
         for f in firms: result.append(('firms',f['uuid'],{'uuid':f['uuid'],'data':json.loads(f['data']),'updated_at':f['updated_at']}))
         for c in contacts: result.append(('contacts',c['uuid'],{'uuid':c['uuid'],'firm_uuid':firm_ids[c['firm_id']], 'data':json.loads(c['data']), 'crm':self.meta(c['id']), 'created_at':c['created_at'],'updated_at':c['updated_at']}))
+        for signal in signals: result.append(('signals',signal['uuid'],signal))
+        for segment in segments: result.append(('segments',segment['firm_uuid'],segment))
         for s in self.scripts(): result.append(('scripts',s['uuid'],s))
         for e in self.all_events(True): result.append(('interactions',e['uuid'],e))
+        statuses={c['uuid']:c['status'] for c in self.db.contacts() if c.get('uuid')}
         for r in runs:
-            run=self.db.run(r['id'])
-            summary={k:v for k,v in self.run_summary(run).items() if k in ('provider','mode','use_ollama','new_contacts','duplicates','review_contacts','omitted','reserved_credits','phones_pending')}
+            run=self.db.run(r['id'],decorate=False);run['uuid']=r['uuid']
+            summary={k:v for k,v in self.run_summary(run,statuses).items() if k in ('provider','mode','use_ollama','new_contacts','duplicates','review_contacts','omitted','reserved_credits','phones_pending','signals_found','new_signals')}
             result.append(('runs',r['uuid'],{k:run[k] for k in ('uuid','keywords','status','started_at','finished_at','plan','completed_queries','total_queries','credits','contacts_found','errors','queries')} | {'summary':summary}))
         for o in observations: result.append(('observations',o['contact_uuid']+'_'+o['run_uuid'],o))
         return result
@@ -292,6 +311,8 @@ class CRM:
                     self.atomic(target,dump({'schema_version':1,'record':record})+'\n')
                 contacts=self.db.contacts()
                 self.atomic(self.directory/'contactos.csv',self.contact_csv(contacts))
+                from .signals import list_signals
+                self.atomic(self.directory/'senales.csv',csv_text(['ID','Gestora','Tipo','Publicación','Fecha evento','Base fecha','Revisión','Cita','Fuente'],([s['uuid'],s['company'],s['kind'],s['published_at'],s.get('event_at'),s['date_basis'],s['review'],s['quote'],s['source_url']] for s in list_signals(self))))
                 events=self.all_events(True); names={c['uuid']:c['name'] for c in contacts}
                 self.atomic(self.directory/'interacciones.csv',csv_text(['ID','Contacto','Fecha','Autor','Canal','Resultado','Comentario','Guion','Versión','Seguimiento','Corrige'],
                     ([e['uuid'],names.get(e['contact_uuid'],e['contact_uuid']),e['occurred_at'],e['author'],e['channel'],e.get('result'),e['comment'],e.get('script_uuid'),e.get('script_version'),e.get('follow_up'),e.get('supersedes')] for e in events)))
@@ -308,8 +329,10 @@ class CRM:
         self.write_cache[str(path)]=checksum
 
     def contact_csv(self, contacts):
-        return csv_text(['ID','Nombre','Cargo','Gestora','País','Puntuación','Calificación','Etapa','Responsable','LinkedIn','Correo','Verificación correo','Teléfonos','Foto','Última interacción','Seguimiento','Comentarios'],
-            ([c['uuid'],c['name'],c.get('role'),c['company'],c.get('country'),c['score'],c['status'],c['stage'],c['owner'],c.get('linkedin_url'),c['email'],c['email_status'],' | '.join(p.get('number','') for p in c['phones']),c.get('photo_url'),c['last_interaction'],c['follow_up'],c['notes']] for c in contacts))
+        from .segments import firm_segments
+        sectors=firm_segments(self,{c['firm_id'] for c in contacts})
+        return csv_text(['ID','Nombre','Cargo','Gestora','País','Puntuación','Calificación','Etapa','Responsable','LinkedIn','Correo','Verificación correo','Teléfonos','Foto','Última interacción','Seguimiento','Comentarios','Señales recientes','Fuentes señales','Oportunidad','Estado oportunidad','Subsector'],
+            ([c['uuid'],c['name'],c.get('role'),c['company'],c.get('country'),c['score'],c['status'],c['stage'],c['owner'],c.get('linkedin_url'),c['email'],c['email_status'],' | '.join(p.get('number','') for p in c['phones']),c.get('photo_url'),c['last_interaction'],c['follow_up'],c['notes'],c.get('recent_signal_count',0),' | '.join(s['source_url'] for s in c.get('business_signals',[]) if s['review']!='rejected'),c.get('opportunity_score',0),c.get('opportunity_status','pending'),sectors[c['firm_id']]['label']] for c in contacts))
 
     def conflicts(self):
         with self.db.connect() as con: return [dict(r) | {'data':json.loads(r['data'])} for r in con.execute('SELECT * FROM shared_conflicts')]
@@ -324,7 +347,7 @@ class CRM:
         with self.lock:
             self.write_cache.clear()
             imported=0
-            for kind in ('firms','contacts','scripts','interactions','runs','observations'):
+            for kind in ('firms','contacts','signals','segments','scripts','interactions','runs','observations'):
                 for path in sorted((self.directory/kind).glob('*.json')):
                     try:
                         payload=json.loads(path.read_text(encoding='utf-8'))
@@ -388,6 +411,29 @@ class CRM:
             cid,_=self.db.upsert_contact(r['data'],firm['id'])
             with self.db.connect() as con: con.execute('UPDATE contacts SET uuid=?,created_at=?,updated_at=? WHERE id=?',(r['uuid'],r['created_at'],r['updated_at'],cid))
             self.set_meta(cid,**r.get('crm',{})); return
+        if kind=='signals':
+            from .signals import validate_shared_signal, canonical_source
+            r=validate_shared_signal(r)
+            r={**r,'firm_uuid':self.canonical(r['firm_uuid']),'source_url':canonical_source(r['source_url'])}
+            original_key=key
+            key=str(uuid.uuid5(uuid.NAMESPACE_URL,r['firm_uuid']+'|'+r['source_url']+'|'+r['kind']+'|'+normalized(r['quote'])))
+            r={**r,'uuid':key}
+            with self.db.connect() as con:
+                if not con.execute('SELECT id FROM firms WHERE uuid=?',(r['firm_uuid'],)).fetchone(): raise ValueError('Gestora de la señal no encontrada.')
+                if original_key!=key: con.execute('INSERT OR REPLACE INTO shared_aliases VALUES(?,?)',(original_key,key))
+                old=con.execute('SELECT data FROM business_signals WHERE uuid=?',(key,)).fetchone()
+                if old and json.loads(old[0])!=r and not force:self.conflict(kind,key,r,json.loads(old[0]));return
+                con.execute('INSERT OR REPLACE INTO business_signals VALUES(?,?,?)',(key,r['firm_uuid'],dump(r)))
+            return
+        if kind=='segments':
+            from .segments import validate_shared_segment
+            r=validate_shared_segment(r); r={**r,'firm_uuid':self.canonical(r['firm_uuid']),'uuid':self.canonical(r['firm_uuid'])}
+            with self.db.connect() as con:
+                if not con.execute('SELECT id FROM firms WHERE uuid=?',(r['firm_uuid'],)).fetchone(): raise ValueError('Gestora del subsector no encontrada.')
+                old=con.execute('SELECT data FROM firm_segments WHERE firm_uuid=?',(r['firm_uuid'],)).fetchone()
+                if old and json.loads(old[0])['segment']!=r['segment'] and not force: self.conflict(kind,r['firm_uuid'],r,json.loads(old[0])); return
+                con.execute('INSERT OR REPLACE INTO firm_segments VALUES(?,?)',(r['firm_uuid'],dump(r)))
+            return
         if kind=='scripts':
             old=self.script(key)
             if old and old!=r and not force: self.conflict(kind,key,r,old); return

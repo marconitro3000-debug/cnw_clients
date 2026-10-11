@@ -242,6 +242,13 @@ def valid_firm_name(name):
     if len(name) > 120 or len(name.strip()) < 3: return False
     if re.search(r'\b(?:report|informe|association|asociacion|federation|federacion|trusted partner|your trusted|welcome|bienvenido|market outlook|industry overview|asset management in europe|our expertise)\b', text): return False
     if text in ('asset management','investment management','fund management','gestora'): return False
+    # Article, ranking and directory headlines are not companies.
+    if ':' in name or '?' in name or re.search(r'\btop \d+|\b\d+ (?:best|mejores|meilleures?)\b', text): return False
+    if re.search(r'\b(?:insights?|the rise of|the future of|ranking|rankings|news|noticias|guide|guia|how to|como elegir|the best|los mejores|incontournables|les boutiques|las mejores|lista de|list of|managers by|que es|what is)\b', text): return False
+    if re.fullmatch(r'(?:gestoras?|sociedad(?:es)? gestoras?) de fondos de inversion.*', text): return False
+    if re.search(r'\b(?:trends?|tendencias|competitors|competidores|alternatives|outlook|about)\b|^(?:19|20)\d\d\b|\b(?:19|20)\d\d$', text) or name.count(',') >= 2: return False
+    # A name made only of generic industry words names no company.
+    if not re.sub(r'\b(?:the|top|specialist|leading|independent|boutique|global|european|asset|assets|investment|investments|fund|funds|management|manager|managers|gestora|gestoras|de|fondos|equity|equities|and|&)\b|[^a-z0-9]', '', text): return False
     return True
 
 def result_firm(result):

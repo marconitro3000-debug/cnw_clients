@@ -50,6 +50,9 @@ OTHER_COUNTRIES = {
 }
 DECISOR = r"\b(?:cio|chief investment officer|investment director|director(?:a)? (?:de )?inversiones|head of (?:equities|equity|investments?|investment management)|responsable (?:de )?(?:renta variable|inversiones)|(?:managing |founding )?partner|socio(?:a)?(?: director(?:a)?)?)\b"
 MANAGER = r"\b(?:portfolio manager|fund manager|investment manager|gestor(?:a)?(?: de (?:fondos|carteras))?)\b"
+# At a 5-200 person boutique the founder, CEO or head of research usually signs for research tools.
+LEADER = r"\b(?:founder|co-?founder|founding|fundador(?:a)?|cofundador(?:a)?|ceo|chief executive|consejer[oa] delegad[oa]|director(?:a)? general|managing director|chair(?:man|woman|person)?|presidente?a?|executive board|comite (?:ejecutivo|de direccion)|head of (?:equity |investment |quantitative |quant )?research|director(?:a)? de (?:analisis|research)|research director|head of (?:\w+ ){0,2}(?:investment strateg\w*|portfolio management|hedge funds?)|co-?manager)\b"
+NOT_BUYER = r"\b(?:sales|business development|relationship manager|consultant|support|marketing|client service|investor relations|distribution|desarrollo de negocio|comercial)\b"
 ANALYST = r"\b(?:equity analyst|investment analyst|analista(?: de inversiones| de renta variable)?)\b"
 EQUITY = r"\b(?:renta variable|equities|(?:public |listed |global |european |long.?short )?equity|stock(?:s| selection| picking)?)\b"
 ANALYSIS = r"\b(?:stock selection|stock picking|equity research|seleccion de acciones|analisis (?:de acciones|fundamental|cuantitativo)|fundamental analysis|quantitative (?:analysis|research)|factor investing)\b"
@@ -142,7 +145,9 @@ def role_points(role):
     value = normalized(role)
     if re.search(r"\b(?:former|ex-|previous|anterior|retired|jubilado)\b", value):
         return 0
-    if re.search(DECISOR, value):
+    if re.search(NOT_BUYER, value):
+        return 0
+    if re.search(DECISOR, value) or re.search(LEADER, value):
         return 40
     if re.search(MANAGER, value):
         return 25
@@ -153,7 +158,26 @@ def role_points(role):
 def evidence(field, value, url, quote, observed_at=None):
     return {"field": field, "value": value, "url": url, "quote": str(quote)[:900], "observed_at": observed_at or now()}
 
+SOFT_ISSUES = {"ai_review", "possible_duplicate"}
+
+def resolve_conflicts(contact):
+    """Sources that disagree only in compatible ways are not a contradiction: several European offices, or several decision roles."""
+    contact = dict(contact)
+    issues = list(contact.get("issues", []))
+    evidence_list = contact.get("evidence", [])
+    countries = [e["value"] for e in evidence_list if e.get("field") == "country" and e.get("value")]
+    if "conflict:country" in issues and countries and all(c in EUROPE for c in countries):
+        contact["country"] = max(set(countries), key=lambda c: (countries.count(c), c))
+        issues.remove("conflict:country")
+    roles = [e["value"] for e in evidence_list if e.get("field") == "role" and isinstance(e.get("value"), str) and e["value"].strip()]
+    if "conflict:role" in issues and roles and all(role_points(r) > 0 for r in roles):
+        contact["role"] = max(roles, key=lambda r: (role_points(r), len(r), roles.count(r)))
+        issues.remove("conflict:role")
+    contact["issues"] = issues
+    return contact
+
 def score_contact(contact):
+    contact = resolve_conflicts(contact)
     evidence_list = contact.get("evidence", [])
     issues = list(contact.get("issues", []))
     lo, hi = contact.get("employees_min"), contact.get("employees_max")
@@ -177,7 +201,8 @@ def score_contact(contact):
     country = contact.get("country", "")
     if size_out or contact.get("equity") is False or (country and country not in EUROPE):
         status = "excluded"
-    elif size_ok and contact.get("equity") is True and country in EUROPE and reasons[0]["points"] > 0 and not issues:
+    # Unknown size and review-only notices are shown as pending checks; they do not hide a real decision maker.
+    elif contact.get("equity") is True and country in EUROPE and reasons[0]["points"] > 0 and not [i for i in issues if i not in SOFT_ISSUES]:
         status = "qualified"
     else:
         status = "review"

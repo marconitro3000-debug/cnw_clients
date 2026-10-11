@@ -25,6 +25,9 @@ class Runner:
     def start_public(self,contact_ids):
         return self.start('Correos, LinkedIn y teléfonos públicos',[],{'provider':'public','mode':'public_contacts','contact_ids':contact_ids})
 
+    def start_signals(self,firm_ids,days=90):
+        return self.start('Noticias y señales recientes',[],{'provider':'signals','firm_ids':firm_ids,'days':days})
+
     def canceled(self, run_id):
         run = self.db.run(run_id, decorate=False)
         return not run or bool(run["cancel_requested"])
@@ -38,6 +41,9 @@ class Runner:
         if hasattr(self.db,"crm") and self.db.crm.run_metadata(run_id).get("provider")=="public":
             from .public_contacts import execute_public
             return await execute_public(self,run_id)
+        if hasattr(self.db,'crm') and self.db.crm.run_metadata(run_id).get('provider')=='signals':
+            from .signals import execute_signal_scan
+            return await execute_signal_scan(self,run_id)
         plan = run["plan"]
         fetcher = self.fetcher_factory()
         firms = {}
@@ -50,6 +56,14 @@ class Runner:
                     firms[seed["domain"]] = seed
         completed = 0
         found_ids = set()
+
+        def explored(candidate):
+            # Firms whose people were already searched in an earlier run only yield cached duplicates.
+            with self.db.connect() as con:
+                row = con.execute("SELECT name FROM firms WHERE domain=? LIMIT 1", (candidate.get("domain", "").lower().removeprefix("www."),)).fetchone()
+                if row is None: return False
+                return con.execute("SELECT 1 FROM run_queries WHERE phase='people' AND run_id<>? AND instr(text, ?)>0 LIMIT 1", (run_id, '"' + row[0] + '"')).fetchone() is not None
+
         # Templates are expanded for at most four discovered companies.
         firms_plan = [q for q in plan if q["phase"] == "firms"]
         people_plan = [q for q in plan if q["phase"] == "people"]
@@ -159,7 +173,7 @@ class Runner:
                         self.db.update_run(run_id, contacts_found=len(found_ids))
                     candidate = result_firm(result)
                     if candidate is None: continue
-                    if candidate["domain"] not in firms and len(firms) >= 4:
+                    if candidate["domain"] not in firms and (len(firms) >= 4 or explored(candidate)):
                         self.db.upsert_firm(candidate)
                         continue
                     if candidate.get("equity") is False: continue
@@ -168,7 +182,7 @@ class Runner:
                     firms[current["domain"]] = current
                     improved = await ingest_page(url, current)
                     if improved: firms[current["domain"]] = improved
-            if crm: crm.export_shared()
+            if crm: await asyncio.to_thread(crm.export_shared)
             return True
 
         try:
@@ -207,4 +221,4 @@ class Runner:
             self.db.update_run(run_id, status="failed", finished_at=now())
 
         finally:
-            if crm: crm.export_shared()
+            if crm: await asyncio.to_thread(crm.export_shared)

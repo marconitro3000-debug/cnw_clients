@@ -58,8 +58,14 @@ def test_score_requires_evidence_and_known_target():
     assert c["score"] == 100 and c["status"] == "qualified"
     c["evidence"] = []
     assert score_contact(c)["score"] == 0
-    c["employees_max"] = 250
-    assert score_contact(c)["status"] == "review"
+    c["evidence"] = person()["evidence"] + firm()["evidence"]
+    c["employees_min"] = c["employees_max"] = None
+    unknown = score_contact(c)
+    assert unknown["status"] == "qualified" and unknown["score"] == 80 and "Tamaño sin verificar" in unknown["missing"]
+    assert score_contact({**c, "issues": ["possible_duplicate", "ai_review"]})["status"] == "qualified"
+    assert score_contact({**c, "issues": ["conflict:country"]})["status"] == "review"
+    c["employees_min"] = c["employees_max"] = 250
+    assert score_contact(c)["status"] == "excluded"
 
 @pytest.mark.parametrize("role,expected", [("CIO",40),("Directora de inversiones",40),("Head of Equities",40),("Portfolio Manager",25),("Investment Analyst",10),("Former CIO",0)])
 def test_role_weights(role, expected):
@@ -320,9 +326,9 @@ def test_accent_variants_do_not_erase_a_name(db):
 def test_role_filter_matches_the_same_exact_role_as_the_interface(client):
     client.post("/api/contacts",json=manual(employees_min=None,employees_max=None).model_dump())
     client.post("/api/contacts",json=manual(name="Luis Pérez",role="Former CIO",linkedin_url="https://linkedin.com/in/luis-perez",employees_min=None,employees_max=None).model_dump())
-    contacts=client.get("/api/contacts?status=review&role=CIO").json()
+    contacts=client.get("/api/contacts?status=all&role=CIO").json()
     assert [c["name"] for c in contacts]==["Ana Pérez"]
-    csv_text=client.get("/api/contacts/export?status=review&role=CIO").text
+    csv_text=client.get("/api/contacts/export?status=all&role=CIO").text
     assert "Ana Pérez" in csv_text and "Luis Pérez" not in csv_text
 
 
@@ -372,3 +378,23 @@ def test_key_configuration_rejects_untrusted_origin(tmp_path):
     with TestClient(create_app(settings)) as client:
         response=client.post("/api/settings/tavily",json={"api_key":"tvly-test-configured-key"},headers={"Origin":"https://evil.test"})
         assert response.status_code==403 and not settings.api_key
+
+
+@pytest.mark.parametrize("role,expected", [("CEO",40),("Co-Founder",40),("Managing Director",40),("Head of Equity Research",40),("Member of the Executive Board",40),
+    ("Consejero Delegado",40),("Head of Business Development",0),("Sales Director",0),("Relationship Manager",0),("Director Comercial",0)])
+def test_boutique_leaders_are_decision_makers_and_sales_roles_are_not(role, expected):
+    assert role_points(role) == expected
+
+def test_compatible_source_disagreements_do_not_block_a_contact():
+    base = {**person(), **{k:v for k,v in firm().items() if k != "name"}, "name": "Ana Pérez", "evidence": person()["evidence"] + firm()["evidence"]}
+    offices = [evidence("country", c, "https://aurora.example/" + c, c) for c in ("España", "Luxemburgo", "España")]
+    c = score_contact({**base, "country": "", "issues": ["conflict:country"], "evidence": base["evidence"] + offices})
+    assert c["country"] == "España" and c["status"] == "qualified"
+    abroad = score_contact({**base, "country": "", "issues": ["conflict:country"], "evidence": base["evidence"] + [evidence("country", "Estados Unidos", "https://x.example", "US")]})
+    assert abroad["status"] == "review"
+    roles = [evidence("role", r, "https://aurora.example/team", r) for r in ("Gestor", "Gestor de Fondos de Renta Variable")]
+    no_role = [e for e in base["evidence"] if e["field"] != "role"]
+    resolved = score_contact({**base, "role": "", "issues": ["conflict:role"], "evidence": no_role + roles + [evidence("role", "Gestor", "https://aurora.example/b", "Gestor")]})
+    assert resolved["role"] == "Gestor de Fondos de Renta Variable" and resolved["reasons"][0]["points"] == 25
+    mixed = score_contact({**base, "role": "", "issues": ["conflict:role"], "evidence": no_role + roles + [evidence("role", "Sales Director", "https://x.example", "Sales Director")]})
+    assert mixed["status"] == "review"

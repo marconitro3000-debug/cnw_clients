@@ -1,0 +1,40 @@
+import {useEffect,useState} from 'react'
+import {Check,ExternalLink,LoaderCircle,Search,X} from 'lucide-react'
+import {api,type BusinessSignal,type ScanningState,type Health} from './types'
+
+const post=(data:unknown)=>({method:'POST',body:JSON.stringify(data)})
+const failure=(e:unknown)=>e instanceof Error?e.message:'No se pudo completar la operación.'
+const labels:Record<string,string>={recent:'Publicación reciente',estimated:'Fecha estimada · revisar',old:'Publicación antigua',undated:'Sin fecha fiable',historical:'Evento histórico',future:'Fecha futura'}
+const statuses:Record<string,string>={confirmed:'Confirmada',detected:'Detectada',pending:'Propuesta local · revisar',rejected:'Descartada'}
+const date=(value:string|null)=>value?new Date(value+'T12:00:00').toLocaleDateString('es-ES'):'Pendiente'
+
+function SignalEvidence({signal:s}:{signal:BusinessSignal}){
+  return <><div className="signal-tags"><span className="stage-pill">{s.label}</span><span>{labels[s.recency]||s.recency}</span><span>{statuses[s.review]||s.review}</span></div><p className="signal-date">Publicación: {date(s.published_at)}{s.date_basis==='provider_estimate'?' · estimada por el buscador':''}{s.event_at?' · Evento: '+date(s.event_at):''}</p><blockquote>{s.quote}</blockquote><a className="signal-source" href={s.source_url} target="_blank" rel="noopener noreferrer"><ExternalLink size={13}/>Leer publicación original</a></>
+}
+export function ContactSignals({signals=[]}:{signals?:BusinessSignal[]}){
+  const visible=signals.filter(s=>s.review!=='rejected')
+  if(!visible.length)return null
+  return <section className="contact-signals"><h3>Noticias y señales de la gestora</h3><p>Hechos publicados para investigar. La disposición a comprar se confirma en conversación.</p>{visible.map(s=><details className="signal-detail" key={s.uuid}><summary>{s.label} · {date(s.published_at)}</summary><SignalEvidence signal={s}/></details>)}</section>
+}
+export function SignalsWorkspace({scanning,health,revision,onRefresh,onAgenda}:{scanning:ScanningState|null;health:Health|null;revision:number;onRefresh:()=>void;onAgenda:(company:string)=>void}){
+  const [days,setDays]=useState('90'),[target,setTarget]=useState(''),[continuous,setContinuous]=useState(true),[includeOld,setIncludeOld]=useState(false),[kind,setKind]=useState(''),[page,setPage]=useState(1)
+  const [firms,setFirms]=useState<{id:number;name:string;domain:string}[]>([]),[kinds,setKinds]=useState<Record<string,string>>({}),[rows,setRows]=useState<BusinessSignal[]>([]),[total,setTotal]=useState(0),[busy,setBusy]=useState(false),[error,setError]=useState('')
+  useEffect(()=>{let alive=true;void api<{firms:typeof firms;kinds:Record<string,string>}>('/api/signals/targets').then(r=>{if(alive){setFirms(r.firms);setKinds(r.kinds)}}).catch(e=>{if(alive)setError(failure(e))});return()=>{alive=false}},[revision])
+  useEffect(()=>{let alive=true;const params=new URLSearchParams({days,kind,page:String(page),recent_only:String(!includeOld),...(target?{firm_id:target}:{})});void api<{items:BusinessSignal[];total:number}>('/api/signals?'+params).then(r=>{if(alive){setRows(r.items);setTotal(r.total);setError('')}}).catch(e=>{if(alive)setError(failure(e))});return()=>{alive=false}},[revision,days,kind,target,includeOld,page])
+  async function start(){setBusy(true);setError('');try{await api('/api/signals/searches',post({days:Number(days),firm_ids:target?[Number(target)]:[],continuous}));onRefresh()}catch(e){setError(failure(e))}finally{setBusy(false)}}
+  async function review(s:BusinessSignal,decision:string){setBusy(true);setError('');try{await api('/api/signals/'+s.uuid+'/review',post({decision}));onRefresh()}catch(e){setError(failure(e))}finally{setBusy(false)}}
+  return <section className="signals-workspace">
+    <div className="panel signal-search"><div className="section-line"><div><h2>Noticias y publicaciones recientes</h2><p>Lanzamientos, contrataciones, expansión, responsables y tecnología. También identifica estrategias event-driven.</p></div></div>
+    <div className="signal-search-fields"><label>Periodo<select value={days} onChange={e=>{setDays(e.target.value);setPage(1)}}>{[30,90,180,365].map(d=><option value={d} key={d}>Últimos {d} días</option>)}</select></label><label>Gestora<select value={target} onChange={e=>{setTarget(e.target.value);setPage(1)}}><option value="">Todas las gestoras identificadas</option>{firms.map(f=><option key={f.id} value={f.id}>{f.name} · {f.domain}</option>)}</select></label><button className="primary" disabled={busy||scanning?.signals?.enabled||!health?.api_configured||!firms.length} onClick={()=>void start()}>{busy?<LoaderCircle className="spin" size={16}/>:<Search size={16}/>}Buscar noticias y posts</button></div>
+    <label className="checkbox-label"><input type="checkbox" checked={continuous} onChange={e=>setContinuous(e.target.checked)}/>Vigilar publicaciones y avanzar por gestoras</label>
+    <p className="hint">Usa la cuota gratuita configurada de Tavily: hasta 12 búsquedas básicas por lote. Con el modelo instalado, el análisis se hace en este equipo, sin coste por tokens. Una ejecución a la vez; al recorrer las gestoras vuelve a comprobarlas a las 24 horas.</p>
+    {!health?.api_configured&&<p role="status">Conecta Tavily en Ajustes para encontrar publicaciones.</p>}
+    {scanning?.signals?.enabled&&<p role="status">{scanning.signals.status==='queued'?'En cola: empezará al terminar el lote activo.':scanning.signals.reason||'Vigilancia de publicaciones activada.'}</p>}
+    </div>
+    <div className="results-heading"><div><h2>Señales para tu próxima conversación</h2><p>{total} publicaciones · cada señal conserva cita, fecha y fuente</p></div><div className="signal-list-filters"><select aria-label="Tipo de señal" value={kind} onChange={e=>{setKind(e.target.value);setPage(1)}}><option value="">Todos los tipos</option>{Object.entries(kinds).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select><label className="checkbox-label"><input type="checkbox" checked={includeOld} onChange={e=>{setIncludeOld(e.target.checked);setPage(1)}}/>Incluir antiguas y sin fecha</label></div></div>
+    {error&&<p className="error-text" role="alert">{error}</p>}
+    <div className="signal-results">{rows.map(s=><article className="panel signal-card" key={s.uuid}><div className="section-line"><div><small>{s.company} · {s.domain}</small><h3>{s.title||s.label}</h3></div><button className="secondary small" onClick={()=>onAgenda(s.company)}>Ver contactos</button></div><SignalEvidence signal={s}/>{s.kind==='event_driven'&&<p className="hint">Describe una estrategia de inversión. No es una señal de intención de compra.</p>}<div className="inline-actions"><button className="secondary small" disabled={busy||s.review==='confirmed'} onClick={()=>void review(s,'confirmed')}><Check size={14}/>Confirmar señal</button><button className="text-button" disabled={busy||s.review==='rejected'} onClick={()=>void review(s,'rejected')}><X size={14}/>Descartar señal</button>{s.review==='rejected'&&<button className="text-button" disabled={busy} onClick={()=>void review(s,'pending')}>Volver a revisar</button>}</div>{s.reviews.length>0&&<details className="signal-reviews"><summary>Historial de revisión</summary>{s.reviews.map((r,i)=><p key={i}>{r.author} · {statuses[r.decision]||r.decision} · {new Date(r.at).toLocaleString('es-ES')}</p>)}</details>}</article>)}</div>
+    {!rows.length&&!error&&<div className="panel compact-empty">Todavía no hay señales con estos filtros. Inicia el escaneo o incluye publicaciones antiguas y sin fecha para revisarlas.</div>}
+    <div className="pagination"><span>{total} publicaciones guardadas con estos filtros</span><div><button className="secondary small" disabled={page===1} onClick={()=>setPage(p=>p-1)}>Anterior</button><span>Página {page} de {Math.max(1,Math.ceil(total/50))}</span><button className="secondary small" disabled={page*50>=total} onClick={()=>setPage(p=>p+1)}>Siguiente</button></div></div>
+  </section>
+}
