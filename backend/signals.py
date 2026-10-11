@@ -49,7 +49,11 @@ def source_document(result,page=None):
         for t in soup.select('time[datetime]'): dates.append(date_value(t['datetime']))
         for tag in soup(['script','style','nav','footer','aside']):tag.decompose()
         scope=soup.find('article') or soup.find('main') or soup.body or soup
-        text=scope.get_text(' ',strip=True)[:16000]
+        # Preserve paragraph boundaries without breaking inline names and titles.
+        # A flattened newsroom can exceed the sentence limit and lose every signal.
+        for block in scope.find_all(['p','div','li','h1','h2','h3','h4','blockquote','br']):
+            block.insert_after('\n')
+        text='\n'.join(' '.join(line.split()) for line in scope.get_text(' ').splitlines() if line.strip())[:16000]
         heading=scope.find('h1')
         if heading:title=heading.get_text(' ',strip=True)[:300]
     unique=set(d for d in dates if d)

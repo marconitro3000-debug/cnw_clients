@@ -369,3 +369,12 @@ def test_explicit_event_dates_override_recent_publication(phrase,expected):
     signal=extract_signals(doc('Aurora Asset Management launches a new fund '+phrase+'.'),FIRM)[0]
     assert recency(signal) in (expected,'historical') if expected=='old' else recency(signal)==expected
     if phrase.startswith(('on 12 June','on June','el 12')):assert signal['event_at']=='2020-06-12'
+
+
+def test_newsroom_paragraphs_and_inline_company_names_keep_extractable_evidence():
+    result={'url':doc()['url'],'title':'News','content':'','published_date':TODAY}
+    page={'url':result['url'],'html':'<main><div>'+('Background context '*80)+'</div><p>Aurora <strong>Asset Management</strong> launches a new equity fund</p><p>'+('More background '*80)+'</p></main>'}
+    document=source_document(result,page)
+    records=extract_signals(document,FIRM)
+    assert any(s['kind']=='fund_launch' and s['quote']==QUOTE.rstrip('.') for s in records)
+    assert document['date_basis']=='provider_estimate'

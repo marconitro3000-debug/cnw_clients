@@ -33,7 +33,7 @@ test('news has its own tab, dated sources, reviews and the same contact agenda',
   await expect(page.locator('.signal-card')).toHaveCount(1)
   await page.getByRole('button',{name:'Buscar noticias y posts',exact:true}).last().click()
   await expect(page.getByText('En cola: empezará al terminar el lote activo.')).toBeVisible()
-  await expect(page.getByRole('button',{name:'Detener noticias',exact:true})).toBeVisible()
+  await expect(page.getByRole('button',{name:'Detener noticias',exact:true}).first()).toBeVisible()
   await card.getByRole('button',{name:'Confirmar señal'}).click()
   await expect(card.getByText('Confirmada',{exact:true})).toBeVisible()
   await card.getByText('Historial de revisión').click()
@@ -72,4 +72,29 @@ test('news workspace and scanner cards fit a narrow screen',async({page})=>{
   const color=await page.getByRole('heading',{name:'Noticias y publicaciones recientes'}).evaluate(el=>getComputedStyle(el).color)
   expect(['rgb(0, 0, 0)','rgb(17, 17, 17)']).toContain(color)
   await page.screenshot({path:'test-results/screenshots/news-mobile.png',fullPage:true})
+})
+
+
+test('standalone news shows scan progress and can stop and resume without opening searches',async({page})=>{
+  let stops=0,resumes=0
+  const scans:any={web:{enabled:true,status:'running',lots:2},public:{enabled:false,status:'idle',lots:0},signals:{enabled:true,status:'queued',lots:1,last_run_id:42},apollo:{enabled:false,status:'idle',lots:0}}
+  await page.route('**/api/health',async route=>{const r=await route.fetch();return route.fulfill({json:{...await r.json(),api_configured:true}})})
+  await page.route('**/api/scanning',route=>route.fulfill({json:scans}))
+  await page.route('**/api/signals/targets',route=>route.fulfill({json:{firms:[{id:1,name:'Aurora Asset Management',domain:'aurora.example'}],kinds:{}}}))
+  await page.route('**/api/signals?*',route=>route.fulfill({json:{items:[],total:0}}))
+  await page.route('**/api/searches/42',route=>route.fulfill({json:{id:42,provider:'signals',status:'completed',completed_queries:3,total_queries:3,signals_found:0,errors:['La fuente no permite leer esta página según robots.txt.']}}))
+  await page.route('**/api/scanning/signals/stop',route=>{stops++;scans.signals={...scans.signals,enabled:false,status:'stopped',reason:'Detenido.'};return route.fulfill({json:scans})})
+  await page.route('**/api/scanning/signals/resume',route=>{resumes++;scans.signals={...scans.signals,enabled:true,status:'queued',reason:''};return route.fulfill({json:scans})})
+  await page.goto('/#/noticias')
+  await expect(page.getByRole('heading',{name:'Noticias y publicaciones recientes'})).toBeVisible()
+  await expect(page.getByText('En cola: empezará al terminar el lote activo.')).toBeVisible()
+  await expect(page.getByText('Último escaneo: Completada · 3/3 consultas · 0 señales encontradas')).toBeVisible()
+  await page.getByText('Avisos del último escaneo (1)').click()
+  await expect(page.getByText('La fuente no permite leer esta página según robots.txt.')).toBeVisible()
+  await page.getByRole('button',{name:'Detener noticias',exact:true}).click()
+  await expect(page.getByRole('button',{name:'Buscar noticias y posts',exact:true})).toBeEnabled()
+  await page.getByRole('button',{name:'Continuar noticias',exact:true}).click()
+  await expect(page.getByRole('button',{name:'Detener noticias',exact:true})).toBeVisible()
+  expect(stops).toBe(1);expect(resumes).toBe(1)
+  await expect(page).toHaveURL(/#\/noticias/)
 })
