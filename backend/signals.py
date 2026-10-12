@@ -150,6 +150,9 @@ def recency(signal,days=90):
 
 def save_signal(crm,firm_id,signal):
     firm=crm.db.firm(firm_id)
+    if not firm.get('uuid'):
+        crm.identifiers()
+        firm=crm.db.firm(firm_id)
     key=str(uuid.uuid5(uuid.NAMESPACE_URL,firm['uuid']+'|'+signal['source_url']+'|'+signal['kind']+'|'+normalized(signal['quote'])))
     with crm.db.connect() as con:
         old=con.execute('SELECT data FROM business_signals WHERE uuid=?',(key,)).fetchone()

@@ -1,6 +1,7 @@
 """Persistent public discovery, independent of search-provider credits and run locks."""
 import asyncio
 import json
+import logging
 import httpx
 import re
 from xml.etree import ElementTree
@@ -320,7 +321,9 @@ class PublicCrawler:
                 try:
                     await self.process(item)
                     success = True
-                except (ProviderError, httpx.HTTPError, OSError, asyncio.TimeoutError, ValueError, ElementTree.ParseError) as error:
+                except Exception as error:
+                    if not isinstance(error, (ProviderError, httpx.HTTPError, OSError, asyncio.TimeoutError, ValueError, ElementTree.ParseError)):
+                        logging.getLogger(__name__).exception('Error processing public page %s; continuing with the next page', item['url'])
                     self.state['failed_pages'] += 1
                     message = str(error) or 'La página no respondió a tiempo.'
                     self.state['errors'] = ([{'url': item['url'], 'message': message}] + self.state['errors'])[:20]
@@ -335,6 +338,7 @@ class PublicCrawler:
                     con.execute("UPDATE crawl_queue SET status='pending' WHERE id=?", (item['id'],))
             raise
         except Exception:
+            logging.getLogger(__name__).exception('Public crawler infrastructure failed')
             self.state.update(enabled=False, status='failed', current_url='')
             self.note('', 'Error interno del rastreador. Las páginas y contactos guardados se conservan.')
             if item:

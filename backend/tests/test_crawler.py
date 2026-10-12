@@ -205,3 +205,40 @@ def test_web_scan_revisits_previous_empty_and_old_searches(tmp_path):
             assert '"Aurora Asset Management" team' in search.calls
             assert crawler.db.run(rid)['status']=='completed'
     asyncio.run(run())
+
+
+def test_new_firm_news_without_contacts_gets_stable_uuid_and_does_not_crash(tmp_path):
+    from backend.signals import list_signals
+    async def run():
+        html=HOME+'<article>Aurora Asset Management launches a new equity fund.</article>'
+        crawler,_=setup(tmp_path,Pages({'https://aurora.example/':html}))
+        crawler.enqueue([{'url':'https://aurora.example/'}])
+        item=await step(crawler)
+        assert not crawler.db.contacts()
+        records=list_signals(crawler.crm)
+        assert len(records)==1 and records[0]['firm_uuid']
+        assert crawler.state['new_signals']==1
+        await crawler.process(item)
+        assert len(list_signals(crawler.crm))==1 and crawler.state['new_signals']==1
+        assert len(list((tmp_path/'shared'/'firms').glob('*.json')))==1
+    asyncio.run(run())
+
+
+def test_unexpected_page_error_is_logged_and_next_page_still_adds_contacts(tmp_path,caplog):
+    async def run():
+        crawler,_=setup(tmp_path)
+        crawler.enqueue([{'url':'https://aurora.example/bad','priority':0},
+                         {'url':'https://aurora.example/team','priority':1}])
+        original=crawler.process
+        async def process(item):
+            if item['url'].endswith('/bad'):raise TypeError('Malformed page fixture')
+            await original(item)
+            crawler.state['enabled']=False
+        crawler.process=process
+        await asyncio.wait_for(crawler.loop(),10)
+        assert crawler.state['failed_pages']==1 and crawler.state['new_contacts']==1
+        assert 'Malformed page fixture' in caplog.text
+        with crawler.db.connect() as con:
+            rows=con.execute('SELECT status FROM crawl_queue ORDER BY id').fetchall()
+        assert [r[0] for r in rows]==['failed','done']
+    asyncio.run(run())

@@ -50,7 +50,8 @@ function TavilyConnection({ configured, disabled = false, onConfigured }: { conf
   </section>
 }
 
-function SearchDialog({ health, onClose, onStart, onConfigured }: { health: Health | null; onClose: () => void; onStart: (run: Run) => void; onConfigured: (health: Health) => void }) {
+function SearchDialog({ health, onClose, onStart, onConfigured, onFreeStart }: { health: Health | null; onClose: () => void; onStart: (run: Run) => void; onConfigured: (health: Health) => void; onFreeStart: () => void }) {
+  const unavailable=!!health&&(!health.api_configured||health.credits_used>=health.monthly_limit)
   const [continuous, setContinuous] = useState(true)
   const [advanced, setAdvanced] = useState(false)
   const [keywords, setKeywords] = useState('renta variable')
@@ -82,6 +83,11 @@ function SearchDialog({ health, onClose, onStart, onConfigured }: { health: Heal
       onStart(run); onClose()
     } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
+  async function startFree(){
+    setBusy(true);setError('')
+    try{await api('/api/crawler/start',{method:'POST',body:JSON.stringify({seed_urls:[]})});onFreeStart();onClose()}
+    catch(e){setError((e as Error).message)}finally{setBusy(false)}
+  }
   return <Modal title="Nueva búsqueda" subtitle="Encuentra gestoras y después a las personas que deciden." onClose={onClose} wide>
     <div className="search-inputs"><label>Palabras clave<input value={keywords} onChange={e => setKeywords(e.target.value)} maxLength={300} placeholder="Ej. renta variable europea, value investing" /></label><label>Mercado<select value={country} onChange={e => setCountry(e.target.value)}><option value="">España y Europa</option>{health?.countries.map(c => <option key={c}>{c}</option>)}</select></label></div>
     <p className="search-summary">Buscaremos gestoras de renta variable y sus responsables. Las consultas se preparan automáticamente.</p>
@@ -92,8 +98,9 @@ function SearchDialog({ health, onClose, onStart, onConfigured }: { health: Heal
     <p className="hint">Una consulta por línea. Las plantillas <code>{'{gestora}'}</code> y <code>{'{dominio}'}</code> se rellenan para hasta 4 gestoras. Máximo 20 búsquedas por ejecución.</p></>}
     <label className="checkbox-label"><input type="checkbox" checked={continuous} onChange={e => setContinuous(e.target.checked)} />Buscar continuamente · avanzar sin pedir el siguiente lote</label><p className="hint">Continúa mientras el servidor esté abierto, hasta detenerlo o agotar la cuota gratuita. Cada lote conserva el máximo de 20 consultas.</p>
     {!health?.api_configured && <TavilyConnection configured={false} onConfigured={onConfigured} />}
+    {unavailable&&<div className="notice" role="status"><Info size={17}/><span>{health?.api_configured?'Tavily ha agotado su cuota.':'Tavily no está conectado.'} Puedes continuar con Qwen y el rastreador sin créditos. Sigue directorios y webs identificadas; las consultas y el mercado de arriba corresponden a Tavily.</span><button className="primary" disabled={busy} onClick={()=>void startFree()}>Iniciar rastreo sin créditos</button></div>}
     {error && <div className="error-text" role="alert">{error}</div>}
-    <div className="modal-actions"><span><ShieldCheck size={16} />Fuentes públicas · Cuota limitada</span><button className="primary" disabled={busy || preparedFor!==JSON.stringify([keywords,country]) || !health?.api_configured || !lines(firms).length || !keywords.trim()} onClick={() => void start()}>{busy ? <LoaderCircle size={16} className="spin" /> : <Search size={16} />}Iniciar búsqueda</button></div>
+    <div className="modal-actions"><span><ShieldCheck size={16} />Fuentes públicas · Cuota limitada</span><button className="primary" disabled={unavailable || busy || preparedFor!==JSON.stringify([keywords,country]) || !health?.api_configured || !lines(firms).length || !keywords.trim()} onClick={() => void start()}>{busy ? <LoaderCircle size={16} className="spin" /> : <Search size={16} />}Iniciar búsqueda</button></div>
   </Modal>
 }
 
@@ -233,7 +240,12 @@ export default function App() {
   }
   async function changeScan(source:'web'|'public'|'signals'|'apollo',enabled:boolean) {
     setScanBusy(true);setError('')
-    try {setScanning(await api<ScanningState>('/api/scanning/'+source+'/'+(enabled?'stop':'resume'),{method:'POST'}));await refresh()}
+    try {
+      if(!enabled&&(source==='web'||source==='signals')&&health&&(!health.api_configured||health.credits_used>=health.monthly_limit)){
+        setProviderTab('web');navigate('busquedas');await api('/api/crawler/start',{method:'POST',body:JSON.stringify({seed_urls:[]})})
+      }else setScanning(await api<ScanningState>('/api/scanning/'+source+'/'+(enabled?'stop':'resume'),{method:'POST'}))
+      await refresh()
+    }
     catch(e){setError((e as Error).message)}finally{setScanBusy(false)}
   }
   const resetFilters = () => setFilters(f => ({ ...f, q: '', country: '', role: '', size: '', score: '0' }))
@@ -253,7 +265,7 @@ export default function App() {
         {page==='inicio'&&<div className="market-strip"><span><Globe2 size={14} />España + Europa</span><i /><span><Building2 size={14} />5–200 empleados</span><i /><span><ShieldCheck size={14} />Fuentes públicas</span><button onClick={() => { setDemo(v => !v); resetFilters() }}>{demo ? 'Volver a datos reales' : 'Explorar un ejemplo'}<ArrowUpRight size={13} /></button></div>}
         {page === 'busquedas' && !demo && <section className="scan-controls" aria-label="Escaneos de la lista unificada">{(['web','public','signals'] as const).map(source=>{
           const stream=scanning?.[source],enabled=!!stream?.enabled,title=source==='web'?'Escaneo web':source==='public'?'Datos de contacto':'Noticias y señales'
-          return <article className={'panel scan-card '+(enabled?'scan-enabled':'')} key={source}><div className="section-line"><div><h2>{title}</h2></div>{enabled?<LoaderCircle size={20} className="spin"/>:<ScanSearch size={20}/>}</div><p>{source==='web'?'Descubre gestoras y responsables. Avanza automáticamente por consultas y países.':source==='public'?'Recoge correos, teléfonos, LinkedIn y fotos publicados en webs corporativas.':'Detecta lanzamientos, contrataciones, expansión y cambios de herramientas.'}</p><div className="scan-state"><span className={enabled?'scan-dot active':'scan-dot'}/><strong>{enabled?(stream?.status==='running'?'Escaneando continuamente':stream?.status==='queued'?'En cola':'Continuo activado'):stream?.status==='quota_exhausted'?'Cuota gratuita agotada':stream?.status==='failed'?'Revisar conexión':stream?.status==='interrupted'?'Interrumpido':stream?.status==='stopped'?'Detenido':'Preparado'}</strong><span>{stream?.lots||0} lotes completados</span></div>{stream?.reason&&<small className="scan-reason">{stream.reason}</small>}<div className="inline-actions"><button className="secondary small" disabled={enabled||scanBusy} onClick={()=>{setProviderTab(source);if(source==='web')setModal('search')}}>{source==='web'?'Configurar escaneo web':source==='public'?'Buscar datos públicos':'Buscar noticias y posts'}</button>{(enabled || stream?.last_run_id || source==='web'&&runInfo?.provider==='web'&&run) && <button className={enabled?'secondary small':'primary small'} disabled={scanBusy} onClick={()=>void changeScan(source,enabled)}>{enabled?<Square size={12}/>:<RefreshCw size={14}/>} {enabled?'Detener':'Continuar'} {source==='web'?'web':source==='public'?'datos':'noticias'}</button>}</div><small>{source!=='public'?(source==='signals'?'Misma cuota de Tavily · ':'')+Math.max(0,(health?.monthly_limit||1000)-(health?.credits_used||0))+' créditos gratuitos disponibles en la aplicación':'Lectura pública · sin Apollo ni créditos de búsqueda'}</small></article>
+          return <article className={'panel scan-card '+(enabled?'scan-enabled':'')} key={source}><div className="section-line"><div><h2>{title}</h2></div>{enabled?<LoaderCircle size={20} className="spin"/>:<ScanSearch size={20}/>}</div><p>{source==='web'?'Descubre gestoras y responsables. Avanza automáticamente por consultas y países.':source==='public'?'Recoge correos, teléfonos, LinkedIn y fotos publicados en webs corporativas.':'Detecta lanzamientos, contrataciones, expansión y cambios de herramientas.'}</p><div className="scan-state"><span className={enabled?'scan-dot active':'scan-dot'}/><strong>{enabled?(stream?.status==='running'?'Escaneando continuamente':stream?.status==='queued'?'En cola':'Continuo activado'):stream?.status==='quota_exhausted'?'Cuota gratuita agotada':stream?.status==='failed'?'Revisar conexión':stream?.status==='interrupted'?'Interrumpido':stream?.status==='stopped'?'Detenido':'Preparado'}</strong><span>{stream?.lots||0} lotes completados</span></div>{stream?.reason&&<small className="scan-reason">{stream.reason}</small>}<div className="inline-actions"><button className="secondary small" disabled={enabled||scanBusy} onClick={()=>{setProviderTab(source);if(source==='web')setModal('search')}}>{source==='web'?'Configurar escaneo web':source==='public'?'Buscar datos públicos':'Buscar noticias y posts'}</button>{(enabled || stream?.last_run_id || source==='web'&&runInfo?.provider==='web'&&run) && <button className={enabled?'secondary small':'primary small'} disabled={scanBusy} onClick={()=>void changeScan(source,enabled)}>{enabled?<Square size={12}/>:<RefreshCw size={14}/>} {!enabled&&(source==='web'||source==='signals')&&health&&(!health.api_configured||health.credits_used>=health.monthly_limit)?'Rastrear sin créditos':<>{enabled?'Detener':'Continuar'} {source==='web'?'web':source==='public'?'datos':'noticias'}</>}</button>}</div><small>{source!=='public'?(source==='signals'?'Misma cuota de Tavily · ':'')+Math.max(0,(health?.monthly_limit||1000)-(health?.credits_used||0))+' créditos gratuitos disponibles en la aplicación':'Lectura pública · sin Apollo ni créditos de búsqueda'}</small></article>
         })}<p className="scan-explanation">Los tres escaneos alimentan la misma agenda y alternan sin solaparse. Puedes cerrar esta pestaña: siguen mientras el servidor esté abierto. Detener conserva todo.</p></section>}
 
         {page==='busquedas'&&<AutopilotPanel compact onRefresh={()=>void refresh()}/>}
@@ -295,7 +307,7 @@ export default function App() {
         <footer><span><ShieldCheck size={13} />Cada calificación se apoya en fuentes o revisiones documentadas.</span><span>Kerna Client Research · Hecho para encontrar encaje</span></footer>
       </div>
     </main>
-    {modal === 'search' && <SearchDialog health={health} onConfigured={setHealth} onClose={() => setModal(null)} onStart={newRun} />}
+    {modal === 'search' && <SearchDialog health={health} onConfigured={setHealth} onClose={() => setModal(null)} onStart={newRun} onFreeStart={()=>void refresh()} />}
     {modal === 'apollo' && <Modal title="Screener Apollo" subtitle="Segundo escaneo · todas las personas se guardan en la misma agenda." onClose={() => setModal(null)} wide><ScreenerWorkspace contacts={contacts} health={health} run={run} revision={revision} onRefresh={() => void refresh()} onRun={newRun} onAgenda={() => {setModal(null);showAgenda('all')}}/></Modal>}
     {modal === 'next' && run && <NextBatchDialog run={run} onClose={() => setModal(null)} onStart={newRun}/>}
     {modal === 'edit' && <EditDialog contact={editing} health={health} onClose={() => setModal(null)} onSave={() => void refresh()} />}
