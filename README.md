@@ -221,3 +221,5 @@ API: GET /api/crawler, POST /api/crawler/start (seed_urls opcional), POST /api/c
 Si el piloto agota las consultas preparadas, espera nuevas consultas de Qwen: no crea lotes vacíos con cero búsquedas. El rastreador gratuito sigue operando durante esa espera.
 
 Cuando Tavily no está conectado o se agota la cuota, **Nueva búsqueda** ofrece **Iniciar rastreo sin créditos**, y **Noticias** permite **Rastrear noticias sin créditos** con el mismo proceso. Las consultas y mercados del buscador pertenecen a Tavily; el rastreador gratuito sigue directorios y enlaces reales. Las noticias de firmas recién descubiertas reciben un identificador antes de guardarse, incluso sin contactos. Los errores de una página quedan registrados y no interrumpen el resto del rastreo.
+
+En **Contactos**, el selector **País de agenda** está siempre visible y **Solo España** activa o desactiva el filtro de España con un clic. Se aplica al país registrado de la gestora, a la paginación y a **Exportar lista filtrada**. Los perfiles sin país registrado quedan fuera cuando se elige un país.
