@@ -1,4 +1,4 @@
-"""Initial consultative scripts based on the user's supplied commercial playbook."""
+"""Conversation starters and follow-ups from the user's Kerna messaging playbook."""
 import json
 import uuid
 from .domain import now
@@ -27,12 +27,56 @@ SCRIPTS = [
 ]
 
 
+FOLLOW_UP_SCRIPTS = [
+    ('connection','00 · Solicitud de conexión breve','Personas que aún no conocen Kerna',
+     'Solo para la invitación a conectar. Personaliza una estrategia real y comprueba el límite de caracteres de la solicitud antes de enviarla. Los cinco primeros mensajes se usan después, cuando puedes escribir con más espacio.',
+     'Hola {nombre}, soy {asesor}, de Kerna. Trabajamos con modelos predictivos aplicados a la inversión en renta variable. He visto vuestro enfoque en {estrategia} y me parecía interesante conectar. ¡Un saludo!',
+     'Hi {nombre}, I’m {asesor}, from Kerna. We work with predictive models for equity investing. I saw your focus on {estrategia} and thought it would be interesting to connect. Best regards!'),
+    ('accepted','06 · Después de aceptar la conexión','Contactos que acaban de aceptar la invitación',
+     'Úsalo únicamente si ha aceptado la conexión. Introduce una aplicación concreta de Kerna y abre conversación. No repitas la presentación si ya habéis hablado de ella.',
+     'Hola {nombre}, gracias por aceptar.\n\nPor darte algo más de contexto, en Kerna estimamos probabilidades de eventos como sorpresas en resultados, recompras de acciones y cambios de régimen de mercado.\n\nLa idea es complementar el análisis fundamental con información probabilística, sin sustituir las herramientas que ya utiliza el gestor.\n\nPor vuestro enfoque en {estrategia}, pensé que algunas de estas señales podrían resultar relevantes.\n\n¿Habéis tenido ocasión de trabajar con este tipo de información?',
+     'Hi {nombre}, thanks for connecting.\n\nTo give you a little more context, at Kerna we estimate probabilities of events such as earnings surprises, share buybacks and changes in market regime.\n\nThe idea is to complement fundamental analysis with probabilistic information, alongside the tools you already use.\n\nGiven your focus on {estrategia}, I thought some of these signals might be relevant.\n\nHave you had a chance to work with this kind of information?'),
+    ('reply_yes','07 · Si ya utiliza información probabilística','Contactos que responden que sí',
+     'Solo después de una respuesta real. Propón un ejemplo de su universo y verifica la cobertura de Kerna antes de ofrecerlo. La reunión se plantea cuando el ejemplo le resulte útil.',
+     'Gracias, {nombre}. ¿En qué parte del análisis os resulta más útil esa información?\n\nPor vuestro enfoque en {estrategia}, podríamos partir de una compañía que sigáis y revisar un ejemplo de Kerna: qué evento estima, en qué horizonte y qué evidencia lo acompaña.\n\n¿Te interesaría ver un ejemplo sobre alguna compañía?',
+     'Thanks, {nombre}. Where in your analysis do you find that information most useful?\n\nGiven your focus on {estrategia}, we could start with a company you follow and review a Kerna example: the event it estimates, the time horizon and the supporting evidence.\n\nWould you be interested in seeing an example for a company?'),
+    ('reply_no','08 · Si aún no utiliza este tipo de información','Contactos que responden que no',
+     'Explica una sola aplicación, sin desplegar todos los modelos ni dar por hecho que existe interés. Si no responde o no le interesa, deja espacio.',
+     'Gracias por contármelo, {nombre}. Una aplicación concreta sería revisar la probabilidad de una sorpresa en resultados antes de que publique una compañía que sigáis. Es una perspectiva adicional para contrastar con vuestro análisis.\n\nPor vuestro enfoque en {estrategia}, ¿te resultaría útil ver un ejemplo sobre alguna compañía?',
+     'Thanks for sharing, {nombre}. One specific application would be reviewing the probability of an earnings surprise before a company you follow reports. It provides an additional perspective to compare with your own analysis.\n\nGiven your focus on {estrategia}, would an example for a company be useful?'),
+]
+
+# Retire the original bundled scripts once, keeping their IDs, versions and results.
+LEGACY_SCRIPT_IDS = (
+    '1f7c2a73-3d5e-4c87-81c8-23b38d2a0dc5',
+    '4fcc8b2f-159b-44ca-babf-7d3f4b9d2268',
+    '72ebd4a0-29c2-4c71-9ade-51f696f91671',
+    'f55bc824-2ff2-4213-a6ba-2be8865c51e9',
+)
+
+
 def seed_scripts(crm):
     timestamp=now()
     with crm.db.connect() as con:
-        for key,title,audience,guidance,text,english in SCRIPTS:
+        for key,title,audience,guidance,text,english in SCRIPTS + FOLLOW_UP_SCRIPTS:
             identifier=str(uuid.uuid5(uuid.NAMESPACE_URL,'kerna:consultative:v1:'+key))
+            stage = key if key in ('connection','accepted') else 'reply' if key.startswith('reply_') else 'first'
+            metadata = {'moment':stage,'recommended':key in ('fundamental','earnings','senior')}
+            old=con.execute('SELECT data FROM scripts WHERE uuid=?',(identifier,)).fetchone()
+            if old:
+                record=json.loads(old[0])
+                if any(record.get(k)!=v for k,v in metadata.items()):
+                    record.update(metadata,updated_at=timestamp)
+                    con.execute('UPDATE scripts SET data=? WHERE uuid=?',(json.dumps(record,ensure_ascii=False),identifier))
+                continue
             data={'uuid':identifier,'title':title,'channel':'linkedin','text':text,'english_text':english,'audience':audience,
                   'guidance':guidance,'archived':False,'created_at':timestamp,'updated_at':timestamp,
-                  'versions':[{'version':1,'title':title,'channel':'linkedin','text':text,'english_text':english,'created_at':timestamp}]}
+                  **metadata,'versions':[{'version':1,'title':title,'channel':'linkedin','text':text,'english_text':english,'created_at':timestamp}]}
             con.execute('INSERT OR IGNORE INTO scripts VALUES(?,?)',(identifier,json.dumps(data,ensure_ascii=False)))
+        for identifier in LEGACY_SCRIPT_IDS:
+            old=con.execute('SELECT data FROM scripts WHERE uuid=?',(identifier,)).fetchone()
+            if not old: continue
+            record=json.loads(old[0])
+            if record.get('retired_by')=='kerna-messaging-v2': continue
+            record.update(archived=True,retired_by='kerna-messaging-v2',updated_at=timestamp)
+            con.execute('UPDATE scripts SET data=? WHERE uuid=?',(json.dumps(record,ensure_ascii=False),identifier))

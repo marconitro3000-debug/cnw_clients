@@ -200,7 +200,8 @@ class CRM:
 
     def script(self, script_uuid): return next((s for s in self.scripts() if s['uuid']==script_uuid),None)
     def scripts(self):
-        with self.db.connect() as con: return [json.loads(r[0]) for r in con.execute('SELECT data FROM scripts ORDER BY uuid')]
+        with self.db.connect() as con:
+            return sorted((json.loads(r[0]) for r in con.execute('SELECT data FROM scripts')),key=lambda s:(s.get('archived',False),s['title'].casefold()))
     def save_script(self, body, script_uuid=None):
         old=self.script(script_uuid) if script_uuid else None
         if script_uuid and not old: raise LookupError('Guion no encontrado.')

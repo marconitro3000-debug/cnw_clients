@@ -232,7 +232,9 @@ En **Mis clientes**, crea una cartera con tu nombre, selecciónala y pulsa **Usa
 
 Las carteras se comparten en `shared-data/portfolios/` y `shared-data/portfolio_clients/`, usando identificadores estables. Las bajas se conservan para que una importación no vuelva a añadir clientes retirados. **Exportar cartera** descarga sus clientes y seguimiento.
 
-**Guiones** incluye cinco entradas consultivas, con versiones en español e inglés, basadas en el documento comercial aportado: gestor fundamental, estrategia o sector, earnings, valoración y gestor senior. Se precargan una sola vez y respetan ediciones y archivados. En una ficha, selecciona el guion al registrar una interacción, personaliza la estrategia pública y revisa la vista previa antes de copiar. Las variables son `{nombre}`, `{gestora}`, `{asesor}` y `{estrategia}`. El método consultivo acompaña desde la preparación hasta una evaluación concreta; no se envían mensajes automáticamente.
+**Guiones** incluye nueve mensajes en español e inglés: solicitud de conexión breve; las cinco aperturas de gestor fundamental, estrategia o sector, earnings, valoración y gestor senior; mensaje tras aceptar; y respuestas según ya utilice o no información probabilística. Puedes filtrar por momento o empezar por los recomendados (1, 3 y 5), personalizar los datos y copiar el mensaje completo. La guía explica Kerna en una frase, exige una razón real para escribir y propone abrir conversación antes de ofrecer una reunión. Los cuatro guiones originales se archivan una sola vez, conservando versiones y resultados; se pueden restaurar. Los nuevos respetan ediciones y archivados. En una ficha, selecciona el guion al registrar una interacción y personaliza la estrategia pública. Las variables son `{nombre}`, `{gestora}`, `{asesor}` y `{estrategia}`. No se envían mensajes automáticamente.
+
+También puedes [leer o descargar los nueve guiones en español e inglés](docs/guiones-kerna.md) directamente desde el repositorio. Las copias nuevas los incorporan al arrancar; no necesitas la base de datos local de otra persona.
 
 ### Guardado y actualizaciones sin saltos
 

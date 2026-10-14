@@ -6,7 +6,7 @@ from backend.main import create_app
 from backend.providers import Settings
 from backend.crm import CRM
 from backend.db import Database
-from backend.playbook import seed_scripts
+from backend.playbook import LEGACY_SCRIPT_IDS, seed_scripts
 from backend.signals import extract_signals, save_signal
 
 @pytest.fixture
@@ -88,14 +88,36 @@ def test_invalid_portfolio_inputs_do_not_create_clients_or_interactions(workspac
 def test_initial_scripts_are_bilingual_and_never_overwrite_user_edits(workspace):
     client,app,_=workspace
     scripts=client.get('/api/scripts').json()
-    assert len(scripts)==5 and all(s['english_text'] and '{estrategia}' in s['text'] for s in scripts)
+    assert len(scripts)==9 and all(s['english_text'] and '{estrategia}' in s['text'] for s in scripts)
+    assert {s['moment'] for s in scripts}=={'connection','first','accepted','reply'}
+    assert len([s for s in scripts if s['recommended']])==3
     script=scripts[0]
     changed={**script,'text':'Apertura personalizada','english_text':'Personal message','archived':True}
     assert client.patch('/api/scripts/'+script['uuid'],json=changed).status_code==200
     seed_scripts(app.state.crm)
     stored=app.state.crm.script(script['uuid'])
     assert stored['text']=='Apertura personalizada' and stored['archived'] and len(stored['versions'])==2
-    assert len(client.get('/api/scripts').json())==5
+    assert len(client.get('/api/scripts').json())==9
+
+
+def test_replacing_legacy_scripts_preserves_versions_and_can_be_restored(workspace):
+    client,app,_=workspace
+    legacy={'uuid':LEGACY_SCRIPT_IDS[-1],'title':'Antiguo primer contacto','channel':'linkedin',
+            'text':'Mensaje anterior','archived':False,'created_at':'2026-01-01','updated_at':'2026-01-01',
+            'versions':[{'version':1,'title':'Antiguo primer contacto','channel':'linkedin','text':'Mensaje anterior','created_at':'2026-01-01'}]}
+    with app.state.db.connect() as con:
+        con.execute('INSERT INTO scripts VALUES(?,?)',(legacy['uuid'],json.dumps(legacy)))
+    custom=client.post('/api/scripts',json={'title':'Mi mensaje personalizado','channel':'email','text':'Mensaje propio'}).json()
+    seed_scripts(app.state.crm)
+    retired=app.state.crm.script(legacy['uuid'])
+    assert retired['archived'] and retired['versions']==legacy['versions'] and retired['text']==legacy['text']
+    assert not app.state.crm.script(custom['uuid'])['archived']
+    snapshot=app.state.crm.scripts()
+    seed_scripts(app.state.crm)
+    assert app.state.crm.scripts()==snapshot
+    assert client.patch('/api/scripts/'+legacy['uuid'],json={**retired,'archived':False}).status_code==200
+    seed_scripts(app.state.crm)
+    assert not app.state.crm.script(legacy['uuid'])['archived']
 
 def test_company_news_are_filtered_by_firm_and_not_other_companies(workspace):
     from datetime import date

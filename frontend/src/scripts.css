@@ -1,0 +1,11 @@
+.script-personalization h3{margin:0 0 10px;font-size:16px}
+.script-personalization .form-grid{margin-top:16px}
+.script-personalization label,.script-controls>label:not(.checkbox-label){display:flex;flex-direction:column;gap:8px;font-size:12px;min-width:0}
+.script-personalization input,.script-controls select{width:100%;min-width:0;padding:11px 12px;border:1px solid #dfe8d1;border-radius:12px;background:transparent;color:inherit;font:inherit}
+.script-controls{align-items:flex-end;gap:18px}
+.script-controls>.checkbox-label{margin-bottom:11px}
+.script-card>small{display:block;margin-top:10px}
+.scripts-grid .script-card>p{overflow-wrap:anywhere;max-height:none;overflow:visible}
+.script-card>.secondary{margin-top:12px}
+.consultative-guide .table-scroll td{white-space:normal;min-width:170px;line-height:1.7}
+@media(max-width:650px){.script-controls>label:not(.checkbox-label){width:100%}}
