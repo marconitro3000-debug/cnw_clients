@@ -208,7 +208,7 @@ export default function App() {
     refreshing.current = true
     try {
       const [[h,c,r],extras] = await Promise.all([
-        Promise.all([api<Health>('/api/health'),api<Contact[]>('/api/contacts?status=all'),api<Run|null>('/api/searches/latest')]),
+        Promise.all([api<Health>('/api/health'),api<Contact[]>('/api/contacts?status=all&summary=true'),api<Run|null>('/api/searches/latest')]),
         Promise.allSettled([api<SharedStatus>('/api/shared/status'),api<ScanningState>('/api/scanning')]),
       ])
       const snapshot=JSON.stringify([c.length,c.reduce((m,x)=>Math.max(m,x.id),0),r&&[r.id,r.status,r.completed_queries,r.contacts_found]])

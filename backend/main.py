@@ -1,3 +1,4 @@
+import asyncio
 import csv
 import io
 import sqlite3
@@ -91,8 +92,15 @@ def create_app(settings=None, provider=None, fetcher_factory=None):
         if origin and origin not in allowed and origin != str(request.base_url).rstrip("/"):
             return JSONResponse({"detail": "Solo se permite acceso desde la aplicación local."}, status_code=403)
         response = await call_next(request)
-        if request.method in ("POST", "PATCH") and response.status_code < 400:
-            crm.export_shared()
+        # Only these legacy profile handlers rely on middleware for shared export.
+        # Other mutations persist their own records; repeating a full export here
+        # blocked the event loop (including unrelated reads) after every action.
+        parts = request.url.path.strip('/').split('/')
+        profile_write = (parts == ['api', 'contacts'] and request.method == 'POST'
+            or len(parts) == 3 and parts[:2] == ['api', 'contacts'] and request.method == 'PATCH'
+            or len(parts) == 4 and parts[:3] == ['api', 'crm', 'contacts'] and request.method == 'PATCH')
+        if profile_write and response.status_code < 400:
+            await asyncio.to_thread(crm.export_shared)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
@@ -158,15 +166,16 @@ def create_app(settings=None, provider=None, fetcher_factory=None):
             db.update_run(run_id, cancel_requested=1, status="stopping")
         return db.run(run_id)
 
-    def filtered(country="", role="", min_score=0, size_min=None, size_max=None, status="qualified", q=""):
+    def filtered(country="", role="", min_score=0, size_min=None, size_max=None, status="qualified", q="", summary=False):
         if status not in ("qualified", "review", "excluded", "all"):
             raise HTTPException(422, "Estado de contacto no válido.")
-        return select_contacts(db.contacts(), country, role, min_score, size_min, size_max, status, q)
+        return select_contacts(db.contacts(summary=summary), country, role, min_score, size_min, size_max, status, q)
 
     @app.get("/api/contacts")
     def contacts(country: str = "", role: str = "", min_score: int = 0, size_min: int | None = None,
-                 size_max: int | None = None, status: str = "qualified", q: str = ""):
-        return [compact_contact(c) for c in filtered(country, role, min_score, size_min, size_max, status, q)]
+                 size_max: int | None = None, status: str = "qualified", q: str = "", summary: bool = False):
+        rows=filtered(country, role, min_score, size_min, size_max, status, q, summary)
+        return rows if summary else [compact_contact(c) for c in rows]
 
     @app.get("/api/stats")
     def stats():

@@ -18,6 +18,7 @@ class ContinuousScanner:
         self.task = None
         self.previous = None
         self.autopilot = None
+        self.tick_lock = asyncio.Lock()
         for source in SOURCES:
             self.streams.setdefault(source, {'enabled': False, 'status': 'idle', 'reason': '', 'lots': 0})
 
@@ -138,6 +139,10 @@ class ContinuousScanner:
         self.persist()
 
     async def tick(self):
+        async with self.tick_lock:
+            await self._tick()
+
+    async def _tick(self):
         for source in SOURCES:
             stream = self.streams[source]
             if not stream.get('enabled'):
@@ -195,28 +200,29 @@ class ContinuousScanner:
                         continue
                     previous_id = stream.get('last_run_id') or config.get('parent_run_id')
                     if config.get('autopilot') and self.autopilot:
-                        keywords, queries = self.autopilot.web_batch()
+                        keywords, queries = await asyncio.to_thread(self.autopilot.web_batch)
                         if not queries:
                             stream.update(status='waiting', reason='Consultas recorridas. Esperando nuevas búsquedas de Qwen; el rastreo sin créditos continúa por separado.', next_at=(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat())
                             self.persist()
                             continue
                     elif previous_id:
-                        batch = prepare_next_batch(self.db, previous_id)
+                        batch = await asyncio.to_thread(prepare_next_batch, self.db, previous_id)
                         if batch['exhausted']:
                             self.defer_cycle(source, 'Consultas recorridas. Se volverán a comprobar dentro de siete días; puedes cambiar las palabras clave ahora.')
                             continue
                         keywords, queries = batch['keywords'], batch['queries']
                     else:
                         keywords, queries = config['keywords'], config['queries']
+                    if not stream.get('enabled'):continue
                     rid = self.runner.start(keywords, queries, {'continuous': True, 'use_ollama': config.get('use_ollama', False), 'parent_run_id': previous_id})
                 elif source=='signals':
                     if self.db.credits_used(self.runner.settings.account)>=self.runner.settings.monthly_limit:
                         stream.update(enabled=False,status='quota_exhausted',reason='Cuota gratuita de búsqueda agotada. Se conservan las señales.');self.persist();continue
                     from .signals import eligible_firms
-                    firms=eligible_firms(self.crm,config.get('firm_ids'))
+                    firms=await asyncio.to_thread(eligible_firms,self.crm,config.get('firm_ids'))
                     ids=[f['id'] for f in firms if f['id']>config.get('after_id',0)][:4]
                     if config.get('autopilot') and self.autopilot:
-                        ids=self.autopilot.signal_firms()
+                        ids=await asyncio.to_thread(self.autopilot.signal_firms)
                         if not ids:
                             stream.update(status='waiting',reason='Gestoras prioritarias revisadas. Se volverán a comprobar en unas horas.',next_at=(datetime.now(timezone.utc)+timedelta(hours=6)).isoformat());self.persist();continue
                     if not ids:
@@ -225,13 +231,14 @@ class ContinuousScanner:
                             config['after_id']=0
                             stream.update(status='waiting',reason='Gestoras recorridas. Volverá a comprobar publicaciones dentro de 24 horas.',next_at=(datetime.now(timezone.utc)+timedelta(days=1)).isoformat())
                         self.persist();continue
+                    if not stream.get('enabled'):continue
                     rid=self.runner.start_signals(ids,config.get('days',90))
                 elif source=='public':
                     wanted=config.get('contact_ids',[])
-                    candidates=[c for c in self.db.contacts() if not c['blocked'] and c['id']>config.get('after_id',0) and (not wanted or c['id'] in wanted)]
+                    candidates=[c for c in await asyncio.to_thread(self.db.contacts) if not c['blocked'] and c['id']>config.get('after_id',0) and (not wanted or c['id'] in wanted)]
                     ids=sorted(c['id'] for c in candidates)[:4]
                     if config.get('autopilot') and self.autopilot:
-                        ids=self.autopilot.public_contacts()
+                        ids=await asyncio.to_thread(self.autopilot.public_contacts)
                         if not ids:
                             stream.update(status='waiting',reason='Contactos prioritarios revisados. Se comprobarán las nuevas fichas en diez minutos.',next_at=(datetime.now(timezone.utc)+timedelta(minutes=10)).isoformat());self.persist();continue
                     if not ids:
@@ -240,6 +247,7 @@ class ContinuousScanner:
                             config['after_id']=0
                             stream.update(status='waiting',reason='Agenda recorrida. Se revisarán nuevas fichas dentro de cinco minutos.',next_at=(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat())
                         self.persist();continue
+                    if not stream.get('enabled'):continue
                     rid=self.runner.start_public(ids)
                 else:
                     config.setdefault('first_page', config.get('page', 1))

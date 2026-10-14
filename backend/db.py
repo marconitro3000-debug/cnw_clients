@@ -78,7 +78,7 @@ def merge_data(old, new, fields, override=False):
 class Database:
     def __init__(self, filename):
         self.filename = str(filename)
-        # Every write goes through connect(); a write bumps the version and invalidates the contact list cache.
+        # Invalidate contact views only when their source tables change.
         self.version = 0
         self._contacts_cache = None
         self._cache_lock = threading.Lock()
@@ -88,10 +88,17 @@ class Database:
         con = sqlite3.connect(self.filename, timeout=15)
         con.row_factory = sqlite3.Row
         con.execute("PRAGMA foreign_keys=ON")
+        changed=set()
+        def track_write(action,table,column,database,trigger):
+            if action in (sqlite3.SQLITE_INSERT,sqlite3.SQLITE_UPDATE,sqlite3.SQLITE_DELETE):
+                changed.add(table)
+            return sqlite3.SQLITE_OK
+        con.set_authorizer(track_write)
         try:
             yield con
             con.commit()
-            if con.total_changes: self.version += 1
+            if con.total_changes and changed.intersection({'contacts','firms','contact_crm','interactions','business_signals','shared_aliases'}):
+                self.version += 1
         except BaseException:
             con.rollback()
             raise
@@ -178,18 +185,26 @@ class Database:
                 (firm_id, key, url, json.dumps(data), now(), now()))
             return cursor.lastrowid, True
 
-    def contacts(self, contact_id=None, contact_uuids=None):
+    def contacts(self, contact_id=None, contact_uuids=None, summary=False):
         if contact_id is None and contact_uuids is None:
             # The full list is rebuilt only after a write (or 30 s, for edits made outside this process).
             with self._cache_lock:
                 cached = self._contacts_cache
                 if cached and cached[0] == self.version and time.monotonic() - cached[1] < 30:
-                    return copy.deepcopy(cached[2])
+                    return copy.deepcopy(self._contact_index(cached[2]) if summary else cached[2])
                 version = self.version
                 result = self._build_contacts(None, None)
                 self._contacts_cache = (version, time.monotonic(), result)
-                return copy.deepcopy(result)
-        return self._build_contacts(contact_id, contact_uuids)
+                return copy.deepcopy(self._contact_index(result) if summary else result)
+        result=self._build_contacts(contact_id, contact_uuids)
+        return self._contact_index(result) if summary else result
+
+    @staticmethod
+    def _contact_index(contacts):
+        # Navigation needs names, filters and counts. Evidence stays on paged lists
+        # and individual files instead of being copied and sent on every poll.
+        excluded={'evidence','reasons','business_signals','contact_sources','data_sources','email_candidates'}
+        return [{**{k:v for k,v in c.items() if k not in excluded},'evidence':[],'reasons':[],'business_signals':[]} for c in contacts]
 
     def _build_contacts(self, contact_id, contact_uuids):
         if contact_uuids is not None and not contact_uuids: return []

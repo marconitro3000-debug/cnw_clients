@@ -53,7 +53,9 @@ def put(crm,kind,record):
 
 def export_workspace(crm):
     # Portfolio edits do not change contact data; avoid rewriting the entire research archive.
-    with crm.lock:
+    # The research archive can take seconds; portfolio files have their own lock.
+    # Full exports also enter here and read current rows, never stale snapshots.
+    with crm.workspace_lock:
         pending={(r['kind'],r['entity_uuid']) for r in crm.conflicts()}
         for kind in ('portfolios','portfolio_clients'):
             for row in records(crm,kind):
@@ -118,11 +120,15 @@ def company_rows(crm):
 def install_workspace(app,crm):
     router=APIRouter(prefix='/api')
     def portfolio(key):
-        row=next((p for p in portfolio_list(crm)['items'] if p['uuid']==key),None)
+        with crm.db.connect() as con:
+            stored=con.execute('SELECT data FROM workspace_records WHERE kind=? AND uuid=?',('portfolios',key)).fetchone()
+        row=json.loads(stored[0]) if stored else None
         if not row:raise HTTPException(404,'Cartera no encontrada.')
         return row
     def contact(cid):
-        c=crm.db.contact(cid)
+        with crm.db.connect() as con:
+            stored=con.execute('SELECT id,uuid FROM contacts WHERE id=?',(cid,)).fetchone()
+        c=dict(stored) if stored else None
         if not c:raise HTTPException(404,'Contacto no encontrado.')
         return c
     def member(key,cid):
@@ -131,15 +137,18 @@ def install_workspace(app,crm):
         return c,existing
     def members(key):
         portfolio(key)
-        by_uuid={c['uuid']:c for c in crm.db.contacts()}
+        rows=[r for r in records(crm,'portfolio_clients') if r['portfolio_uuid']==key]
+        canonical={r['contact_uuid']:crm.canonical(r['contact_uuid']) for r in rows}
+        wanted={canonical[r['contact_uuid']] for r in rows if not r.get('removed')}
+        by_uuid={c['uuid']:c for c in crm.db.contacts(contact_uuids=wanted)}
         seen=set();result=[]
-        for r in sorted(records(crm,'portfolio_clients'),key=lambda r:r['updated_at'],reverse=True):
-            canonical=crm.canonical(r['contact_uuid'])
-            if r['portfolio_uuid']!=key or canonical in seen:continue
-            seen.add(canonical)
-            if r.get('removed') or canonical not in by_uuid:continue
+        for r in sorted(rows,key=lambda r:r['updated_at'],reverse=True):
+            contact_uuid=canonical[r['contact_uuid']]
+            if contact_uuid in seen:continue
+            seen.add(contact_uuid)
+            if r.get('removed') or contact_uuid not in by_uuid:continue
             from .main import compact_contact
-            result.append({**r,'contact_uuid':canonical,'contact':compact_contact(by_uuid[canonical])})
+            result.append({**r,'contact_uuid':contact_uuid,'contact':compact_contact(by_uuid[contact_uuid])})
         return sorted(result,key=lambda r:normalized(r['contact']['name']))
 
     @router.get('/companies')

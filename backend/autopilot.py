@@ -214,11 +214,12 @@ class Autopilot:
     # Duplicates --------------------------------------------------------------------
     async def dedup(self, batch=6):
         from .dedup import merge_obvious, candidate_pairs, merge_contacts, pair_key
-        firms, people = merge_obvious(self.crm)
+        firms, people = await asyncio.to_thread(merge_obvious,self.crm)
         if firms: self.note('dedup', 'Gestoras repetidas fusionadas: ' + ', '.join(f'{name} (copia de {domain})' for name, domain, _ in firms[:6]) + '.')
         if people: self.note('dedup', f'Personas duplicadas fusionadas: {", ".join(people[:6])}.')
         checked = self.state.setdefault('pairs_checked', {})
-        _, unsure = candidate_pairs([c for c in await asyncio.to_thread(self.db.contacts) if not is_junk(c)])
+        contacts = await asyncio.to_thread(self.db.contacts)
+        _, unsure = await asyncio.to_thread(candidate_pairs,[c for c in contacts if not is_junk(c)])
         unsure = [p for p in unsure if pair_key(*p) not in checked][:batch]
         if not unsure or not self.model: return
         self.activity = f'Qwen está comparando {len(unsure)} posibles duplicados'
@@ -328,7 +329,8 @@ class Autopilot:
         if not (web.get('config') or {}).get('autopilot') or len(self.state['queue']) >= 4 or not self.model: return
         self.activity = 'Qwen está preparando búsquedas nuevas'
         countries = self.countries()
-        result = await self.model.ask('plan', PLAN_SYSTEM, {'countries': countries, 'examples_of_good_customers': self.examples(),
+        examples = await asyncio.to_thread(self.examples)
+        result = await self.model.ask('plan', PLAN_SYSTEM, {'countries': countries, 'examples_of_good_customers': examples,
                                                            'already_used': self.state['used'][-30:]}, PLAN_SCHEMA, 400)
         if result is None: return
         used = {normalized(q) for q in self.state['used'] + self.state['queue']}

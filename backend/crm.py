@@ -30,6 +30,7 @@ class CRM:
     def __init__(self, db, directory):
         self.db, self.directory = db, Path(directory)
         self.lock = threading.RLock()
+        self.workspace_lock = threading.RLock()
         self.error = ''
         self.write_cache = {}
         with db.connect() as con:
@@ -57,10 +58,13 @@ class CRM:
 
     def identifiers(self):
         with self.db.connect() as con:
+            missing={table:con.execute('SELECT id FROM '+table+' WHERE uuid IS NULL').fetchall()
+                     for table in ('firms','contacts','runs')}
+            if not any(missing.values()):return
             con.execute('BEGIN IMMEDIATE')
-            for table in ('firms','contacts','runs'):
-                for row in con.execute('SELECT id FROM '+table+' WHERE uuid IS NULL').fetchall():
-                    con.execute('UPDATE '+table+' SET uuid=? WHERE id=?',(uid(),row['id']))
+            for table,rows in missing.items():
+                for row in rows:
+                    con.execute('UPDATE '+table+' SET uuid=? WHERE id=? AND uuid IS NULL',(uid(),row['id']))
 
     def setting(self, key, default=None):
         with self.db.connect() as con: row=con.execute('SELECT data FROM local_settings WHERE key=?',(key,)).fetchone()
@@ -287,9 +291,14 @@ class CRM:
             observations=[json.loads(r[0]) for r in con.execute('SELECT data FROM observations')]
             signals=[json.loads(r[0]) for r in con.execute('SELECT data FROM business_signals')]
             segments=[json.loads(r[0]) for r in con.execute('SELECT data FROM firm_segments')]
+            metadata={r[0]:json.loads(r[1]) for r in con.execute('SELECT contact_id,data FROM contact_crm')}
+            run_metadata={r[0]:json.loads(r[1]) for r in con.execute('SELECT run_id,data FROM run_meta')}
+            queries={}
+            for row in con.execute('SELECT * FROM run_queries ORDER BY id'):
+                queries.setdefault(row['run_id'],[]).append(dict(row))
         result=[]; firm_ids={f['id']:f['uuid'] for f in firms}
         for f in firms: result.append(('firms',f['uuid'],{'uuid':f['uuid'],'data':json.loads(f['data']),'updated_at':f['updated_at']}))
-        for c in contacts: result.append(('contacts',c['uuid'],{'uuid':c['uuid'],'firm_uuid':firm_ids[c['firm_id']], 'data':json.loads(c['data']), 'crm':self.meta(c['id']), 'created_at':c['created_at'],'updated_at':c['updated_at']}))
+        for c in contacts: result.append(('contacts',c['uuid'],{'uuid':c['uuid'],'firm_uuid':firm_ids[c['firm_id']], 'data':json.loads(c['data']), 'crm':metadata.get(c['id'],{}), 'created_at':c['created_at'],'updated_at':c['updated_at']}))
         for signal in signals: result.append(('signals',signal['uuid'],signal))
         for segment in segments: result.append(('segments',segment['firm_uuid'],segment))
         with self.db.connect() as con:
@@ -298,9 +307,15 @@ class CRM:
         for s in self.scripts(): result.append(('scripts',s['uuid'],s))
         for e in self.all_events(True): result.append(('interactions',e['uuid'],e))
         statuses={c['uuid']:c['status'] for c in self.db.contacts() if c.get('uuid')}
+        observed={}
+        for o in observations:observed.setdefault(o['run_uuid'],[]).append(o)
         for r in runs:
-            run=self.db.run(r['id'],decorate=False);run['uuid']=r['uuid']
-            summary={k:v for k,v in self.run_summary(run,statuses).items() if k in ('provider','mode','use_ollama','new_contacts','duplicates','review_contacts','omitted','reserved_credits','phones_pending','signals_found','new_signals')}
+            run={**r,'plan':json.loads(r['plan']),'errors':json.loads(r['errors']),'queries':queries.get(r['id'],[])}
+            entries=observed.get(r['uuid'],[])
+            values={**run_metadata.get(r['id'],{}),'new_contacts':sum(o['new'] for o in entries),
+                    'duplicates':sum(not o['new'] for o in entries),
+                    'review_contacts':sum(statuses.get(u)=='review' for u in {o['contact_uuid'] for o in entries})}
+            summary={k:v for k,v in values.items() if k in ('provider','mode','use_ollama','new_contacts','duplicates','review_contacts','omitted','reserved_credits','phones_pending','signals_found','new_signals')}
             result.append(('runs',r['uuid'],{k:run[k] for k in ('uuid','keywords','status','started_at','finished_at','plan','completed_queries','total_queries','credits','contacts_found','errors','queries')} | {'summary':summary}))
         for o in observations: result.append(('observations',o['contact_uuid']+'_'+o['run_uuid'],o))
         return result
@@ -310,7 +325,7 @@ class CRM:
             try:
                 pending={(c['kind'],c['entity_uuid']) for c in self.conflicts()}
                 for kind, key, record in self.records():
-                    if (kind,key) in pending: continue
+                    if kind in ('portfolios','portfolio_clients') or (kind,key) in pending: continue
                     target=self.directory/kind/(key+'.json'); target.parent.mkdir(parents=True,exist_ok=True)
                     self.atomic(target,dump({'schema_version':1,'record':record})+'\n')
                 contacts=self.db.contacts()
@@ -320,6 +335,8 @@ class CRM:
                 events=self.all_events(True); names={c['uuid']:c['name'] for c in contacts}
                 self.atomic(self.directory/'interacciones.csv',csv_text(['ID','Contacto','Fecha','Autor','Canal','Resultado','Comentario','Guion','Versión','Seguimiento','Corrige'],
                     ([e['uuid'],names.get(e['contact_uuid'],e['contact_uuid']),e['occurred_at'],e['author'],e['channel'],e.get('result'),e['comment'],e.get('script_uuid'),e.get('script_version'),e.get('follow_up'),e.get('supersedes')] for e in events)))
+                from .workspace import export_workspace
+                export_workspace(self)
                 self.error=''; return {'ok':True,'contacts':len(contacts),'interactions':len(events),'conflicts':len(pending)}
             except (OSError,ValueError) as error:
                 self.error='No se pudo guardar shared-data: '+str(error)
@@ -348,7 +365,7 @@ class CRM:
         return row[0] if row else key
 
     def import_shared(self):
-        with self.lock:
+        with self.lock,self.workspace_lock:
             self.write_cache.clear()
             imported=0
             for kind in ('firms','contacts','signals','segments','scripts','interactions','runs','observations','portfolios','portfolio_clients'):
