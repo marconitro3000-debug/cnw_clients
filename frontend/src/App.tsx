@@ -1,3 +1,4 @@
+import {FeedbackProvider,useNotify} from './Feedback'
 import {PortfolioProvider,ClientsWorkspace} from './Clients'
 import {CompaniesWorkspace,openCompany} from './Companies'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -29,6 +30,7 @@ function ContactCard({ contact: c, onDetail }: { contact: Contact; onDetail: (c:
 
 
 function TavilyConnection({ configured, disabled = false, onConfigured }: { configured: boolean; disabled?: boolean; onConfigured: (health: Health) => void }) {
+  const notify=useNotify()
   const [key, setKey] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -37,7 +39,7 @@ function TavilyConnection({ configured, disabled = false, onConfigured }: { conf
     event.preventDefault(); setSaving(true); setError(''); setSaved(false)
     try {
       const health = await api<Health>('/api/settings/tavily', { method: 'POST', body: JSON.stringify({ api_key: key.trim() }) })
-      setKey(''); setSaved(true); onConfigured(health)
+      setKey(''); setSaved(true); notify('Clave de búsqueda guardada.'); onConfigured(health)
     } catch (e) { setError((e as Error).message) } finally { setSaving(false) }
   }
   return <section className="connection-panel" aria-label="Conectar Tavily">
@@ -107,6 +109,7 @@ function SearchDialog({ health, onClose, onStart, onConfigured, onFreeStart }: {
 }
 
 function EditDialog({ contact, health, onClose, onSave }: { contact: Contact | null; health: Health | null; onClose: () => void; onSave: () => void }) {
+  const notify=useNotify()
   const [form, setForm] = useState({
     name: contact?.name || '', role: contact?.role || '', company: contact?.company || '', country: contact?.country || '',
     employees_min: contact?.employees_min?.toString() || '', employees_max: contact?.employees_max?.toString() || '',
@@ -124,7 +127,7 @@ function EditDialog({ contact, health, onClose, onSave }: { contact: Contact | n
       linkedin_url: form.linkedin_url || null, photo_url: form.photo_url || null }
     try {
       await api(contact ? '/api/contacts/' + contact.id : '/api/contacts', { method: contact ? 'PATCH' : 'POST', body: JSON.stringify(body) })
-      onSave(); onClose()
+      notify('Contacto guardado.'); onSave(); onClose()
     } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
   return <Modal title={contact ? 'Revisar contacto' : 'Añadir contacto'} subtitle="Guarda solo datos que hayas comprobado. Los campos vacíos seguirán pendientes." onClose={onClose} wide>
@@ -251,7 +254,7 @@ export default function App() {
     catch(e){setError((e as Error).message)}finally{setScanBusy(false)}
   }
   const resetFilters = () => setFilters(f => ({ ...f, q: '', country: '', role: '', size: '', score: '0' }))
-  return <PortfolioProvider revision={revision}><div className="app-shell">
+  return <FeedbackProvider><PortfolioProvider revision={revision}><div className="app-shell">
     <aside className="sidebar">
       <a className="brand" href="#/inicio" aria-label="Kerna Client Research, inicio"><span className="kerna-wordmark">kerna<small>CLIENT RESEARCH</small></span></a>
       <div className="workspace"><span className="workspace-icon"><Building2 size={17} /></span><div>Espacio comercial<small>Terminal cuantitativo</small></div><span className="workspace-dot" /></div>
@@ -325,5 +328,5 @@ export default function App() {
       <div className="detail-section"><h3>Qué se considera un buen contacto</h3><p className="hint">Cargo decisor: 40 puntos · Renta variable: 30 · Gestora de 5–200 empleados: 20 · Análisis de acciones: 10. Gestores: 25 puntos por cargo; analistas: 10.</p></div>
     </Modal>}
     {detail && <DetailDialog contact={detail} demo={demo} onClose={() => setDetail(null)} onEdit={() => { setEditing(detail); setDetail(null); setModal('edit') }} />}
-  </div></PortfolioProvider>
+  </div></PortfolioProvider></FeedbackProvider>
 }

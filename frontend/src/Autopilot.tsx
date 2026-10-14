@@ -1,3 +1,4 @@
+import {useNotify} from './Feedback'
 import {useEffect,useState} from 'react'
 import {Bot,LoaderCircle,Power} from 'lucide-react'
 import {api} from './types'
@@ -11,10 +12,11 @@ const statusLabels:Record<string,string>={running:'Trabajando',queued:'En cola',
 const time=(value:string)=>new Date(value).toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'})
 
 export function AutopilotPanel({onRefresh,compact=false}:{onRefresh:()=>void;compact?:boolean}){
+  const notify=useNotify()
   const [status,setStatus]=useState<AutopilotStatus|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('')
   const load=()=>api<AutopilotStatus>('/api/autopilot').then(s=>{setStatus(s);setError('')}).catch(e=>setError(failure(e)))
   useEffect(()=>{void load();const timer=window.setInterval(()=>void load(),5000);return()=>window.clearInterval(timer)},[])
-  async function toggle(){if(!status)return;setBusy(true);setError('');try{setStatus(await api<AutopilotStatus>('/api/autopilot',{method:'POST',body:JSON.stringify({enabled:!status.enabled})}));onRefresh()}catch(e){setError(failure(e))}finally{setBusy(false)}}
+  async function toggle(){if(!status)return;setBusy(true);setError('');try{setStatus(await api<AutopilotStatus>('/api/autopilot',{method:'POST',body:JSON.stringify({enabled:!status.enabled})}));notify(status.enabled?'Piloto automático detenido.':'Piloto automático activado.');onRefresh()}catch(e){setError(failure(e))}finally{setBusy(false)}}
   if(!status)return error?<div className="error-text" role="alert">{error}</div>:null
   return <section className={'panel autopilot '+(status.enabled?'on':'')} aria-label="Piloto automático">
     <div className="section-line"><div className="autopilot-title"><Bot size={22}/><div><h2>Piloto automático</h2><p>{status.enabled?'Qwen limpia la agenda, decide qué buscar y completa LinkedIn por prioridad, sin que tengas que pulsar nada.':'Actívalo y Qwen trabajará solo: limpia la agenda, busca boutiques de tu perfil, completa LinkedIn de quien encaja y vigila noticias.'}</p></div></div>

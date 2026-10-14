@@ -1,3 +1,4 @@
+import {useNotify} from './Feedback'
 import {useEffect,useState} from 'react'
 import {Check,ExternalLink,LoaderCircle,RefreshCw,Search,Square,X} from 'lucide-react'
 import {CrawlerPanel} from './Crawler'
@@ -18,6 +19,7 @@ export function ContactSignals({signals=[]}:{signals?:BusinessSignal[]}){
   return <section className="contact-signals"><h3>Noticias y señales de la gestora</h3><p>Hechos publicados para investigar. La disposición a comprar se confirma en conversación.</p>{visible.map(s=><details className="signal-detail" key={s.uuid}><summary>{s.label} · {date(s.published_at)}</summary><SignalEvidence signal={s}/></details>)}</section>
 }
 export function SignalsWorkspace({scanning,health,revision,onRefresh,onAgenda,firmId,firmDomain}:{scanning:ScanningState|null;health:Health|null;revision:number;onRefresh:()=>void;onAgenda:(company:string)=>void;firmId?:number;firmDomain?:string}){
+  const notify=useNotify()
   const [days,setDays]=useState('90'),[target,setTarget]=useState(firmId?String(firmId):''),[continuous,setContinuous]=useState(true),[includeOld,setIncludeOld]=useState(!!firmId),[kind,setKind]=useState(''),[page,setPage]=useState(1)
   const [firms,setFirms]=useState<{id:number;name:string;domain:string}[]>([]),[kinds,setKinds]=useState<Record<string,string>>({}),[rows,setRows]=useState<BusinessSignal[]>([]),[total,setTotal]=useState(0),[busy,setBusy]=useState(false),[error,setError]=useState('')
   const [lastRun,setLastRun]=useState<ScoutRun|null>(null)
@@ -27,8 +29,8 @@ export function SignalsWorkspace({scanning,health,revision,onRefresh,onAgenda,fi
   useEffect(()=>{let alive=true;if(!stream?.last_run_id){setLastRun(null);return}void api<ScoutRun>('/api/searches/'+stream.last_run_id).then(r=>{if(alive)setLastRun(r)}).catch(e=>{if(alive)setError(failure(e))});return()=>{alive=false}},[revision,stream?.last_run_id,stream?.status])
   useEffect(()=>{let alive=true;void api<{firms:typeof firms;kinds:Record<string,string>}>('/api/signals/targets').then(r=>{if(alive){setFirms(r.firms);setKinds(r.kinds)}}).catch(e=>{if(alive)setError(failure(e))});return()=>{alive=false}},[revision])
   useEffect(()=>{let alive=true;const params=new URLSearchParams({days,kind,page:String(page),recent_only:String(!includeOld),...(target?{firm_id:target}:{})});void api<{items:BusinessSignal[];total:number}>('/api/signals?'+params).then(r=>{if(alive){setRows(r.items);setTotal(r.total);setError('')}}).catch(e=>{if(alive)setError(failure(e))});return()=>{alive=false}},[revision,days,kind,target,includeOld,page])
-  async function start(){setBusy(true);setError('');try{if(free){const firm=firms.find(f=>String(f.id)===target);await api('/api/crawler/start',post({seed_urls:firmDomain?['https://'+firmDomain]:firm?['https://'+firm.domain]:[]}))}else await api('/api/signals/searches',post({days:Number(days),firm_ids:target?[Number(target)]:[],continuous}));onRefresh()}catch(e){setError(failure(e))}finally{setBusy(false)}}
-  async function review(s:BusinessSignal,decision:string){setBusy(true);setError('');try{await api('/api/signals/'+s.uuid+'/review',post({decision}));onRefresh()}catch(e){setError(failure(e))}finally{setBusy(false)}}
+  async function start(){setBusy(true);setError('');try{if(free){const firm=firms.find(f=>String(f.id)===target);await api('/api/crawler/start',post({seed_urls:firmDomain?['https://'+firmDomain]:firm?['https://'+firm.domain]:[]}))}else await api('/api/signals/searches',post({days:Number(days),firm_ids:target?[Number(target)]:[],continuous}));notify('Búsqueda de noticias iniciada.');onRefresh()}catch(e){setError(failure(e))}finally{setBusy(false)}}
+  async function review(s:BusinessSignal,decision:string){setBusy(true);setError('');try{await api('/api/signals/'+s.uuid+'/review',post({decision}));notify('Revisión de la noticia guardada.');onRefresh()}catch(e){setError(failure(e))}finally{setBusy(false)}}
   async function changeScan(action:'stop'|'resume'){setBusy(true);setError('');try{await api('/api/scanning/signals/'+action,post({}));onRefresh()}catch(e){setError(failure(e))}finally{setBusy(false)}}
   return <section className="signals-workspace">
     <div className="panel signal-search"><div className="section-line"><div><h2>Noticias y publicaciones recientes</h2><p>Lanzamientos, contrataciones, expansión, responsables y tecnología. También identifica estrategias event-driven.</p></div></div>

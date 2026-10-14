@@ -1,6 +1,8 @@
 import {test,expect} from '@playwright/test'
 
 test('companies group their contacts and news and saved clients keep portfolio state on reload',async({page})=>{
+  const initialPortfolio=await (await page.request.post('/api/portfolios',{data:{name:'Cartera inicial de la prueba'}})).json()
+  await page.request.post('/api/portfolios/'+initialPortfolio.uuid+'/default')
   const people=[]
   for(const [name,company,link] of [['Clara Empresa Nueva QA','Gestora Empresas Nueva QA','clara-empresa-nueva-qa'],['Mario Empresa Nueva QA','Gestora Empresas Nueva QA',''],['Clara Otra Empresa QA','Gestora Empresas Nueva QA Partners','clara-otra-empresa-qa']]){
     const r=await page.request.post('/api/contacts',{data:{name,company,role:'CIO',country:'España',linkedin_url:link?'https://linkedin.com/in/'+link:null,note:'Fixture empresarial'}})
@@ -12,6 +14,7 @@ test('companies group their contacts and news and saved clients keep portfolio s
   await page.locator('.sidebar').getByRole('button',{name:'Mis clientes',exact:true}).click()
   await page.getByLabel('Nombre de tu cartera').fill('Marco QA')
   await page.getByRole('button',{name:'Crear cartera',exact:true}).click()
+  await page.getByRole('button',{name:'Usar como predeterminada',exact:true}).click()
   await expect(page.getByLabel('Cartera activa')).toContainText('Marco QA · Predeterminada')
   await page.getByLabel('Nombre de tu cartera').fill('Equipo QA')
   await page.getByRole('button',{name:'Crear cartera',exact:true}).click()

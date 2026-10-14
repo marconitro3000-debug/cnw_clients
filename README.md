@@ -233,3 +233,9 @@ En **Mis clientes**, crea una cartera con tu nombre, selecciónala y pulsa **Usa
 Las carteras se comparten en `shared-data/portfolios/` y `shared-data/portfolio_clients/`, usando identificadores estables. Las bajas se conservan para que una importación no vuelva a añadir clientes retirados. **Exportar cartera** descarga sus clientes y seguimiento.
 
 **Guiones** incluye cinco entradas consultivas, con versiones en español e inglés, basadas en el documento comercial aportado: gestor fundamental, estrategia o sector, earnings, valoración y gestor senior. Se precargan una sola vez y respetan ediciones y archivados. En una ficha, selecciona el guion al registrar una interacción, personaliza la estrategia pública y revisa la vista previa antes de copiar. Las variables son `{nombre}`, `{gestora}`, `{asesor}` y `{estrategia}`. El método consultivo acompaña desde la preparación hasta una evaluación concreta; no se envían mensajes automáticamente.
+
+### Guardado y actualizaciones sin saltos
+
+En Mis clientes, cada ficha mantiene su propio borrador. Las actualizaciones en segundo plano conservan los campos, el foco y la posición de la página. **Guardar seguimiento** envía esa ficha, muestra **Guardando…** y confirma el resultado con un aviso lateral; si falla, conserva lo escrito. Los cambios sin guardar se recuperan en la misma pestaña mediante un borrador de sesión y se distinguen de los datos ya guardados. Una respuesta antigua no sustituye un guardado reciente.
+
+Las empresas y las fichas permanecen abiertas durante la sincronización. Los indicadores pequeños y los esqueletos de la carga inicial ocupan espacio reservado; los avisos flotan fuera del contenido, también al guardar en un diálogo. Las animaciones respetan la preferencia de movimiento reducido.

@@ -1,3 +1,4 @@
+import {useNotify} from './Feedback'
 import {useEffect,useRef,useState} from 'react'
 import {Bot,ExternalLink,LoaderCircle,Play,Square} from 'lucide-react'
 import {api} from './types'
@@ -8,6 +9,7 @@ const labels:Record<string,string>={running:'Rastreando páginas',waiting:'Fuent
 const failure=(e:unknown)=>e instanceof Error?e.message:'No se pudo completar la operación.'
 
 export function CrawlerPanel({onRefresh,onContacts}:{onRefresh:()=>void;onContacts:()=>void}){
+  const notify=useNotify()
   const [status,setStatus]=useState<CrawlerStatus|null>(null),[model,setModel]=useState<ModelStatus|null>(null),[seeds,setSeeds]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('')
   const refreshRef=useRef(onRefresh),counts=useRef('')
   refreshRef.current=onRefresh
@@ -35,7 +37,7 @@ export function CrawlerPanel({onRefresh,onContacts}:{onRefresh:()=>void;onContac
     try{
       const path=status.enabled?'/api/crawler/stop':'/api/crawler/start'
       setStatus(await api<CrawlerStatus>(path,{method:'POST',body:JSON.stringify(status.enabled?{}:{seed_urls:seeds.split(/\s+/).filter(Boolean)})}))
-      onRefresh()
+      notify(status.enabled?'Rastreador detenido.':'Rastreador activado.');onRefresh()
     }catch(e){setError(failure(e))}finally{setBusy(false)}
   }
   return <section className="panel public-crawler" aria-label="Rastreo web sin créditos">
