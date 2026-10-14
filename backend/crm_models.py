@@ -30,6 +30,7 @@ class ScriptInput(BaseModel):
     title: str = Field(min_length=2,max_length=150)
     channel: Literal['call','linkedin','email']
     text: str = Field(min_length=1,max_length=20000)
+    english_text: str = Field(default='',max_length=20000)
     archived: bool = False
 
 class ApolloSettingsInput(BaseModel):

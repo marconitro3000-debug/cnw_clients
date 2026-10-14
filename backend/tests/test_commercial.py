@@ -82,12 +82,12 @@ def test_versions_and_unique_attribution(commercial):
     event(client,c['id'],script_uuid=s['uuid'])
     event(client,c['id'],channel='note',result='demo')
     event(client,c['id'],channel='note',result='demo')
-    stats=client.get('/api/scripts-statistics').json()
+    stats=[r for r in client.get('/api/scripts-statistics').json() if r['script_uuid']==s['uuid']]
     assert stats[0]['approached']==1 and stats[0]['demos']==0
     assert stats[1]['approached']==1 and stats[1]['demos']==1 and stats[1]['conversion']==100
     assert app.state.crm.dashboard()['totals']=={'identified':1,'qualified':1,'contacted':1,'demos':1}
     with app.state.db.connect() as con:
-        script=json.loads(con.execute('SELECT data FROM scripts').fetchone()[0]);assert len(script['versions'])==2
+        script=json.loads(con.execute('SELECT data FROM scripts WHERE uuid=?',(s['uuid'],)).fetchone()[0]);assert len(script['versions'])==2
 
 
 def test_pagination_filters_letters_export_and_metadata(commercial):

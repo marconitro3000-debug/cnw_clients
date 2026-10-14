@@ -62,7 +62,7 @@ def install_extensions(app,db,settings,runner):
     def guard():
         latest=db.latest_run()
         if latest and latest['status'] in ('queued','running','stopping'): raise HTTPException(409,'Espera a que termine el escaneo.')
-    def filtered(q='',status='all',stage='',country='',role='',min_score=0,size_min=None,size_max=None,channel='',owner='',letter='',view='all',reachability='all',signals='all',opportunity='all',sort='name',segment=''):
+    def filtered(q='',status='all',stage='',country='',role='',min_score=0,size_min=None,size_max=None,channel='',owner='',letter='',view='all',reachability='all',signals='all',opportunity='all',sort='name',segment='',firm_id=None):
         from .main import select_contacts
         contacts=select_contacts(db.contacts(),country,role,min_score,size_min,size_max,status,q)
         sectors=firm_segments(crm,{c['firm_id'] for c in contacts})
@@ -72,6 +72,7 @@ def install_extensions(app,db,settings,runner):
             return first if first=='Ñ' else unicodedata.normalize('NFD',first)[0]
         result=[]
         for c in contacts:
+            if firm_id is not None and c['firm_id']!=firm_id:continue
             if signals=='recent' and not c.get('recent_signal_count'):continue
             entries=[e for e in c.get('business_signals',[]) if e['review']!='rejected']
             if signals=='event_driven' and not any(e['kind']=='event_driven' and e['recency'] in ('recent','estimated') for e in entries):continue
@@ -94,18 +95,18 @@ def install_extensions(app,db,settings,runner):
         return result
 
     @router.get('/crm/contacts')
-    def contacts(page:int=Query(default=1,ge=1),page_size:int=Query(default=50,ge=1,le=50),q:str='',status:str='all',stage:str='',country:str='',role:str='',min_score:int=0,size_min:int|None=None,size_max:int|None=None,channel:str='',owner:str='',letter:str='',view:str='all',reachability:str='all',signals:str='all',opportunity:str='all',sort:str='name',segment:str=''):
+    def contacts(page:int=Query(default=1,ge=1),page_size:int=Query(default=50,ge=1,le=50),q:str='',status:str='all',stage:str='',country:str='',role:str='',min_score:int=0,size_min:int|None=None,size_max:int|None=None,channel:str='',owner:str='',letter:str='',view:str='all',reachability:str='all',signals:str='all',opportunity:str='all',sort:str='name',segment:str='',firm_id:int|None=None):
         if status not in ('all','qualified','review','excluded') or stage and stage not in STAGES or channel and channel not in CHANNELS or view not in ('all','pending','followups','burned','junk'): raise HTTPException(422,'Filtro no válido.')
         if signals not in ('all','recent','review','event_driven') or reachability not in ('all','reachable','missing') or not 0<=min_score<=100: raise HTTPException(422,'Filtro no válido.')
         if opportunity not in ('all',*STATUSES) or sort not in ('name','opportunity') or segment and segment not in SEGMENT_LABELS: raise HTTPException(422,'Filtro no válido.')
-        rows=filtered(q,status,stage,country,role,min_score,size_min,size_max,channel,owner,letter,view,reachability,signals,opportunity,sort,segment)
+        rows=filtered(q,status,stage,country,role,min_score,size_min,size_max,channel,owner,letter,view,reachability,signals,opportunity,sort,segment,firm_id)
         start=(page-1)*page_size
         from .main import compact_contact
         return {'items':[compact_contact(r) for r in rows[start:start+page_size]],'total':len(rows),'page':page,'page_size':page_size}
 
     @router.get('/crm/contacts/export')
-    def export(q:str='',status:str='all',stage:str='',country:str='',role:str='',min_score:int=0,size_min:int|None=None,size_max:int|None=None,channel:str='',owner:str='',letter:str='',view:str='all',reachability:str='all',signals:str='all',opportunity:str='all',sort:str='name',segment:str=''):
-        return Response(crm.contact_csv(filtered(q,status,stage,country,role,min_score,size_min,size_max,channel,owner,letter,view,reachability,signals,opportunity,sort,segment)),media_type='text/csv; charset=utf-8',headers={'Content-Disposition':'attachment; filename="agenda-equity-scout.csv"'})
+    def export(q:str='',status:str='all',stage:str='',country:str='',role:str='',min_score:int=0,size_min:int|None=None,size_max:int|None=None,channel:str='',owner:str='',letter:str='',view:str='all',reachability:str='all',signals:str='all',opportunity:str='all',sort:str='name',segment:str='',firm_id:int|None=None):
+        return Response(crm.contact_csv(filtered(q,status,stage,country,role,min_score,size_min,size_max,channel,owner,letter,view,reachability,signals,opportunity,sort,segment,firm_id)),media_type='text/csv; charset=utf-8',headers={'Content-Disposition':'attachment; filename="agenda-equity-scout.csv"'})
 
     @router.patch('/crm/contacts/{cid}')
     def metadata(cid:int,body:CRMContactInput):
@@ -258,9 +259,11 @@ def install_extensions(app,db,settings,runner):
         from .signals import KINDS,list_signals
         if kind and kind not in KINDS:raise HTTPException(422,'Tipo de señal no válido.')
         from .signals import eligible_firms
-        # Only news about the firms being prospected; signals kept from other firms stay stored but hidden.
-        targets={f['id'] for f in eligible_firms(crm)}
-        rows=[r for r in list_signals(crm,days,firm_id,kind,recent_only) if r['firm_id'] in targets]
+        # Discovery shows prospecting targets; an explicit company view keeps all its saved news.
+        rows=list_signals(crm,days,firm_id,kind,recent_only)
+        if firm_id is None:
+            targets={f['id'] for f in eligible_firms(crm)}
+            rows=[r for r in rows if r['firm_id'] in targets]
         return {'items':rows[(page-1)*50:page*50],'total':len(rows),'page':page}
 
     @router.get('/signals/targets')
@@ -343,4 +346,6 @@ def install_extensions(app,db,settings,runner):
         guard(); crm.set_setting('ollama',body.model_dump()); return await ollama.health()
 
     app.include_router(router)
+    from .workspace import install_workspace
+    install_workspace(app,crm)
     return crm

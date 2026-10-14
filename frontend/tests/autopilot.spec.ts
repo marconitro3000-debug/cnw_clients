@@ -9,7 +9,7 @@ test('autopilot panel, news page and contacts hidden by Qwen can be restored',as
   const panel=page.getByRole('region',{name:'Piloto automático'})
   await expect(panel).toBeVisible()
   await expect(panel.getByRole('button',{name:'Activar piloto automático'})).toBeVisible()
-  await page.locator('.sidebar').getByRole('button',{name:'Noticias',exact:true}).click()
+  await page.goto('/#/noticias')
   await expect(page).toHaveURL(/#\/noticias/)
   await expect(page.getByRole('heading',{name:/Noticias y señales/})).toBeVisible()
   await page.locator('.sidebar').getByRole('button',{name:/^Contactos/}).click()

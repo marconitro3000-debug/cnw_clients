@@ -38,6 +38,7 @@ class CRM:
                     con.execute('ALTER TABLE '+table+' ADD COLUMN uuid TEXT')
                 con.execute('CREATE UNIQUE INDEX IF NOT EXISTS '+table+'_uuid ON '+table+'(uuid)')
             con.executescript('''
+            CREATE TABLE IF NOT EXISTS workspace_records (kind TEXT NOT NULL, uuid TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(kind,uuid));
             CREATE TABLE IF NOT EXISTS business_signals (uuid TEXT PRIMARY KEY, firm_uuid TEXT NOT NULL, data TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS business_signal_firm ON business_signals(firm_uuid);
             CREATE TABLE IF NOT EXISTS contact_crm (contact_id INTEGER PRIMARY KEY REFERENCES contacts(id), data TEXT NOT NULL);
@@ -202,11 +203,11 @@ class CRM:
         data=body.model_dump() if hasattr(body,'model_dump') else dict(body)
         if old:
             versions=list(old['versions'])
-            if any(versions[-1][k]!=data[k] for k in ('title','channel','text')):
-                versions.append({k:data[k] for k in ('title','channel','text')} | {'version':len(versions)+1,'created_at':now()})
+            if any(versions[-1].get(k,'')!=data.get(k,'') for k in ('title','channel','text','english_text')):
+                versions.append({k:data.get(k,'') for k in ('title','channel','text','english_text')} | {'version':len(versions)+1,'created_at':now()})
             record={**old,**data,'versions':versions,'updated_at':now()}
         else:
-            record={**data,'uuid':uid(),'versions':[{k:data[k] for k in ('title','channel','text')} | {'version':1,'created_at':now()}],'created_at':now(),'updated_at':now()}
+            record={**data,'uuid':uid(),'versions':[{k:data.get(k,'') for k in ('title','channel','text','english_text')} | {'version':1,'created_at':now()}],'created_at':now(),'updated_at':now()}
         with self.db.connect() as con: con.execute('INSERT OR REPLACE INTO scripts VALUES(?,?)',(record['uuid'],dump(record)))
         self.export_shared(); return record
 
@@ -291,6 +292,9 @@ class CRM:
         for c in contacts: result.append(('contacts',c['uuid'],{'uuid':c['uuid'],'firm_uuid':firm_ids[c['firm_id']], 'data':json.loads(c['data']), 'crm':self.meta(c['id']), 'created_at':c['created_at'],'updated_at':c['updated_at']}))
         for signal in signals: result.append(('signals',signal['uuid'],signal))
         for segment in segments: result.append(('segments',segment['firm_uuid'],segment))
+        with self.db.connect() as con:
+            for row in con.execute('SELECT kind,uuid,data FROM workspace_records'):
+                result.append((row['kind'],row['uuid'],json.loads(row['data'])))
         for s in self.scripts(): result.append(('scripts',s['uuid'],s))
         for e in self.all_events(True): result.append(('interactions',e['uuid'],e))
         statuses={c['uuid']:c['status'] for c in self.db.contacts() if c.get('uuid')}
@@ -347,7 +351,7 @@ class CRM:
         with self.lock:
             self.write_cache.clear()
             imported=0
-            for kind in ('firms','contacts','signals','segments','scripts','interactions','runs','observations'):
+            for kind in ('firms','contacts','signals','segments','scripts','interactions','runs','observations','portfolios','portfolio_clients'):
                 for path in sorted((self.directory/kind).glob('*.json')):
                     try:
                         payload=json.loads(path.read_text(encoding='utf-8'))
@@ -362,6 +366,18 @@ class CRM:
 
     def import_record(self, kind, key, r, force=False):
         key=self.canonical(key)
+        if kind in ('portfolios','portfolio_clients'):
+            from .workspace import validate_shared
+            r=validate_shared(kind,r)
+            if kind=='portfolio_clients':
+                r={**r,'contact_uuid':self.canonical(r['contact_uuid'])}
+                with self.db.connect() as con:
+                    if not con.execute('SELECT 1 FROM workspace_records WHERE kind=? AND uuid=?',('portfolios',r['portfolio_uuid'])).fetchone():raise ValueError('Cartera compartida no encontrada.')
+                    if not con.execute('SELECT 1 FROM contacts WHERE uuid=?',(r['contact_uuid'],)).fetchone():raise ValueError('Contacto compartido no encontrado.')
+            with self.db.connect() as con:old=con.execute('SELECT data FROM workspace_records WHERE kind=? AND uuid=?',(kind,key)).fetchone()
+            if old and json.loads(old[0])!=r and not force:self.conflict(kind,key,r,json.loads(old[0]));return
+            with self.db.connect() as con:con.execute('INSERT OR REPLACE INTO workspace_records VALUES(?,?,?)',(kind,key,dump(r)))
+            return
         if kind=='firms':
             with self.db.connect() as con: row=con.execute('SELECT * FROM firms WHERE uuid=?',(key,)).fetchone()
             if row:

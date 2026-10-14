@@ -62,6 +62,8 @@ def create_app(settings=None, provider=None, fetcher_factory=None):
         db.interrupt_runs()
         app.state.scanning.interrupt()
         crm.import_shared()
+        from .playbook import seed_scripts
+        seed_scripts(crm)
         from .dedup import merge_obvious
         merge_obvious(crm)
         for contact in db.contacts():

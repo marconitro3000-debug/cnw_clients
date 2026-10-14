@@ -223,3 +223,13 @@ Si el piloto agota las consultas preparadas, espera nuevas consultas de Qwen: no
 Cuando Tavily no está conectado o se agota la cuota, **Nueva búsqueda** ofrece **Iniciar rastreo sin créditos**, y **Noticias** permite **Rastrear noticias sin créditos** con el mismo proceso. Las consultas y mercados del buscador pertenecen a Tavily; el rastreador gratuito sigue directorios y enlaces reales. Las noticias de firmas recién descubiertas reciben un identificador antes de guardarse, incluso sin contactos. Los errores de una página quedan registrados y no interrumpen el resto del rastreo.
 
 En **Contactos**, el selector **País de agenda** está siempre visible y **Solo España** activa o desactiva el filtro de España con un clic. Se aplica al país registrado de la gestora, a la paginación y a **Exportar lista filtrada**. Los perfiles sin país registrado quedan fuera cuando se elige un país.
+
+## Empresas, carteras y venta consultiva
+
+**Empresas** reúne las gestoras descubiertas, con filtros por nombre, país y tipo de negocio. Al abrir una, **Contactos de la empresa** muestra únicamente sus personas (también perfiles sin LinkedIn) y **Noticias de la empresa** muestra sus publicaciones guardadas. Las clasificaciones anteriores se conservan como tipo de empresa y siguen siendo editables. Los enlaces antiguos a Subsectores o Noticias permanecen compatibles.
+
+En **Mis clientes**, crea una cartera con tu nombre, selecciónala y pulsa **Usar como predeterminada**. Desde la agenda o una ficha puedes guardar una persona en la cartera activa. Cada cartera conserva su propio estado (guardado, investigado, perfil revisado, contactado, en evaluación, cliente o archivado), notas, siguiente paso y fecha de seguimiento. Guardar o revisar un perfil no registra un mensaje ni una llamada. Quitar a alguien de una cartera conserva el contacto y sus otras carteras.
+
+Las carteras se comparten en `shared-data/portfolios/` y `shared-data/portfolio_clients/`, usando identificadores estables. Las bajas se conservan para que una importación no vuelva a añadir clientes retirados. **Exportar cartera** descarga sus clientes y seguimiento.
+
+**Guiones** incluye cinco entradas consultivas, con versiones en español e inglés, basadas en el documento comercial aportado: gestor fundamental, estrategia o sector, earnings, valoración y gestor senior. Se precargan una sola vez y respetan ediciones y archivados. En una ficha, selecciona el guion al registrar una interacción, personaliza la estrategia pública y revisa la vista previa antes de copiar. Las variables son `{nombre}`, `{gestora}`, `{asesor}` y `{estrategia}`. El método consultivo acompaña desde la preparación hasta una evaluación concreta; no se envían mensajes automáticamente.

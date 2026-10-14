@@ -1,5 +1,7 @@
+import {PortfolioProvider,ClientsWorkspace} from './Clients'
+import {CompaniesWorkspace,openCompany} from './Companies'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Layers, Newspaper, Moon, Sun, ArrowDownToLine, ArrowRight, ArrowUpRight, Building2, Check, CheckCircle2, ChevronRight, CircleHelp, ClipboardList, FileText, RefreshCw, ScanSearch, Clock3, ExternalLink, Globe2, History, Info, Linkedin, LoaderCircle, MapPin, Plus, Search, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, Square, Target, Users, X } from 'lucide-react'
+import { Moon, Sun, ArrowDownToLine, ArrowRight, ArrowUpRight, Building2, Check, CheckCircle2, ChevronRight, CircleHelp, ClipboardList, FileText, RefreshCw, ScanSearch, Clock3, ExternalLink, Globe2, History, Info, Linkedin, LoaderCircle, MapPin, Plus, Search, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, Square, Target, Users, X } from 'lucide-react'
 import { api, ApiError, activeRun, formatDate, issueLabel, matches, statusLabel, type Contact, type Health, type Query, type Run, type ScoutRun, type SharedStatus, type ScanningState } from './types'
 import { DEMO } from './demo'
 import { Modal, Avatar } from './ui'
@@ -171,9 +173,9 @@ function ActivityDialog({ run, onClose, embedded=false }: { run: Run | null; onC
 
 function ActivityPage({children}:{children:React.ReactNode;title?:string;subtitle?:string;onClose?:()=>void;wide?:boolean}){return <section className="panel activity-page">{children}</section>}
 
-type Page = 'inicio' | 'contactos' | 'subsectores' | 'noticias' | 'busquedas' | 'scripts' | 'actividad' | 'configuracion'
-const pagePaths: Record<Page,string> = {inicio:'inicio',contactos:'contactos',subsectores:'subsectores',noticias:'noticias',busquedas:'busquedas',scripts:'guiones',actividad:'actividad',configuracion:'configuracion'}
-function currentPage(): Page {return (Object.entries(pagePaths).find(([,path])=>window.location.hash==='#/'+path)?.[0] as Page)||'inicio'}
+type Page = 'empresas' | 'clientes' | 'inicio' | 'contactos' | 'subsectores' | 'noticias' | 'busquedas' | 'scripts' | 'actividad' | 'configuracion'
+const pagePaths: Record<Page,string> = {empresas:'empresas',clientes:'clientes',inicio:'inicio',contactos:'contactos',subsectores:'subsectores',noticias:'noticias',busquedas:'busquedas',scripts:'guiones',actividad:'actividad',configuracion:'configuracion'}
+function currentPage(): Page {return (Object.entries(pagePaths).find(([,path])=>window.location.hash.split('/')[1]===path)?.[0] as Page)||'inicio'}
 export default function App() {
   const [page, setPage] = useState<Page>(currentPage)
   const navigate = (next: Page) => {window.location.hash='/'+pagePaths[next];setPage(next);setModal(null);setDemo(false);window.scrollTo(0,0)}
@@ -219,8 +221,8 @@ export default function App() {
   const runInfo = run as ScoutRun | null
   const running = activeRun(run)
   const visibleSearchRun = !!run && ((runInfo?.provider||'web') === providerTab)
-  const labels:Record<Page,string> = {inicio:'Tu espacio comercial',contactos:'Contactos',subsectores:'Subsectores',noticias:'Noticias y señales',busquedas:'Búsquedas',scripts:'Guiones comerciales',actividad:'Actividad de búsqueda',configuracion:'Ajustes'}
-  const descriptions:Record<Page,string> = {inicio:'Tu evolución y próximas conversaciones, de un vistazo.',contactos:'Una agenda para todas las personas, sus conversaciones y próximos pasos.',subsectores:'Las gestoras ya escaneadas, agrupadas por tipo de negocio.',noticias:'Lanzamientos, contrataciones y expansión de tus gestoras. Suman a la oportunidad comercial y deciden a quién se busca primero.',busquedas:'Encuentra personas y señales recientes. Una misma agenda.',scripts:'Escribe tus aperturas y descubre cuáles consiguen reuniones.',actividad:'Consulta el avance, las fuentes y los avisos de la última ejecución.',configuracion:'Conexiones y preferencias de este equipo.'}
+  const labels:Record<Page,string> = {empresas:'Empresas',clientes:'Mis clientes',inicio:'Tu espacio comercial',contactos:'Contactos',subsectores:'Subsectores',noticias:'Noticias y señales',busquedas:'Búsquedas',scripts:'Guiones comerciales',actividad:'Actividad de búsqueda',configuracion:'Ajustes'}
+  const descriptions:Record<Page,string> = {empresas:'Tus gestoras, sus equipos y sus noticias, reunidos en una ficha.',clientes:'Tus carteras personales y el siguiente paso de cada relación.',inicio:'Tu evolución y próximas conversaciones, de un vistazo.',contactos:'Una agenda para todas las personas, sus conversaciones y próximos pasos.',subsectores:'Las gestoras ya escaneadas, agrupadas por tipo de negocio.',noticias:'Lanzamientos, contrataciones y expansión de tus gestoras. Suman a la oportunidad comercial y deciden a quién se busca primero.',busquedas:'Encuentra personas y señales recientes. Una misma agenda.',scripts:'Escribe tus aperturas y descubre cuáles consiguen reuniones.',actividad:'Consulta el avance, las fuentes y los avisos de la última ejecución.',configuracion:'Conexiones y preferencias de este equipo.'}
   const showAgenda = (view: string) => {setAgendaAllProfiles(false);setAgendaKey(k=>k+1);setAgendaView(view);setAgendaSearch('');setAgendaSegment('');setAgendaQualification('all');navigate('contactos')}
   const addContact = () => { setEditing(null); setModal("edit") }
   const reviewContact = (c: Contact) => { setEditing(c); setModal("edit") }
@@ -249,12 +251,12 @@ export default function App() {
     catch(e){setError((e as Error).message)}finally{setScanBusy(false)}
   }
   const resetFilters = () => setFilters(f => ({ ...f, q: '', country: '', role: '', size: '', score: '0' }))
-  return <div className="app-shell">
+  return <PortfolioProvider revision={revision}><div className="app-shell">
     <aside className="sidebar">
       <a className="brand" href="#/inicio" aria-label="Kerna Client Research, inicio"><span className="kerna-wordmark">kerna<small>CLIENT RESEARCH</small></span></a>
       <div className="workspace"><span className="workspace-icon"><Building2 size={17} /></span><div>Espacio comercial<small>Terminal cuantitativo</small></div><span className="workspace-dot" /></div>
       <p className="nav-label">PROSPECCIÓN</p>
-      <nav>{([{id:'inicio',label:'Inicio',icon:Target},{id:'contactos',label:'Contactos',icon:ClipboardList},{id:'subsectores',label:'Subsectores',icon:Layers},{id:'noticias',label:'Noticias',icon:Newspaper},{id:'busquedas',label:'Búsquedas',icon:ScanSearch},{id:'scripts',label:'Guiones',icon:FileText},{id:'actividad',label:'Actividad',icon:History}] as const).map(item=><button key={item.id} className={'nav-item '+(page===item.id?'selected':'')} aria-current={page===item.id?'page':undefined} onClick={()=>navigate(item.id)}><item.icon size={18}/>{item.label}{item.id==='contactos'&&<span>{contacts.length}</span>}</button>)}</nav>
+      <nav>{([{id:'inicio',label:'Inicio',icon:Target},{id:'contactos',label:'Contactos',icon:ClipboardList},{id:'empresas',label:'Empresas',icon:Building2},{id:'clientes',label:'Mis clientes',icon:Users},{id:'busquedas',label:'Búsquedas',icon:ScanSearch},{id:'scripts',label:'Guiones',icon:FileText},{id:'actividad',label:'Actividad',icon:History}] as const).map(item=><button key={item.id} className={'nav-item '+(page===item.id?'selected':'')} aria-current={page===item.id?'page':undefined} onClick={()=>navigate(item.id)}><item.icon size={18}/>{item.label}{item.id==='contactos'&&<span>{contacts.length}</span>}</button>)}</nav>
       <div className="sidebar-target"><div><Target size={16} /><span>TU PERFIL OBJETIVO</span></div><h3>Gestoras de<br />renta variable</h3><p>España y Europa<br />Entre 5 y 200 empleados</p><span className="target-badge"><span />CIO · Responsables de inversión</span></div>
       <div className="sidebar-bottom"><button className="nav-item" onClick={() => navigate('configuracion')}><Settings2 size={18} />Ajustes</button><div className="local-status"><span />Entorno local<small>Datos guardados en tu equipo</small></div></div>
     </aside>
@@ -296,6 +298,8 @@ export default function App() {
           {loading && !demo ? <div className="empty-state"><LoaderCircle className="spin" size={30} /><h3>Cargando tu lista…</h3></div> : list.length ? <div className="contact-grid">{list.map(c => <ContactCard key={c.id} contact={c} onDetail={setDetail} />)}</div> : <div className="empty-state"><span className="empty-icon"><Search size={29} /></span><h3>{source.length ? 'No hay contactos con estos filtros' : 'Tu próxima oportunidad empieza aquí'}</h3><p>{source.length ? 'Ajusta los filtros o revisa las otras listas para ver más contactos.' : 'Busca gestoras de renta variable y descubre quién toma las decisiones.'}</p>{source.length ? <button className="secondary" onClick={resetFilters}>Restablecer filtros</button> : <button className="primary" disabled={running} onClick={() => setModal('search')}><Sparkles size={16} />Preparar primera búsqueda<ArrowRight size={16} /></button>}<div className="empty-steps"><span>Define tus palabras clave</span><ChevronRight size={14} /><span>Descubre decisores</span><ChevronRight size={14} /><span>Prioriza con evidencia</span></div></div>}
         </section>}
         {page === "contactos" && <div id="agenda-unificada"><ContactWorkspace includeIncomplete={agendaAllProfiles} key={agendaKey} search={agendaSearch} segment={agendaSegment} qualification={agendaQualification} contacts={contacts} health={health} run={run} revision={revision} view={agendaView} onView={setAgendaView} onRefresh={() => void refresh()} onRun={newRun} onAdd={addContact} onReview={reviewContact}/></div>}
+        {page === "empresas" && <CompaniesWorkspace scanning={scanning} workspace={{contacts,health,run,revision,view:'all',onView:setAgendaView,onRefresh:()=>void refresh(),onRun:newRun,onAdd:addContact,onReview:reviewContact}} onAgenda={company=>{showAgenda('all');setAgendaSearch(company)}}/>}
+        {page === "clientes" && <ClientsWorkspace revision={revision} onRefresh={()=>void refresh()} onReview={reviewContact} onCompany={openCompany}/>}
         {page === "noticias" && <SignalsWorkspace scanning={scanning} health={health} revision={revision} onRefresh={() => void refresh()} onAgenda={company=>{showAgenda('all');setAgendaSearch(company)}}/>}
         {page === "subsectores" && <SegmentsWorkspace revision={revision} onAgenda={segment=>{showAgenda('all');setAgendaSegment(segment)}} onCompany={company=>{showAgenda('all');setAgendaSearch(company)}}/>}
         {page === "scripts" && <ScriptsWorkspace revision={revision} onRefresh={() => void refresh()}/>}
@@ -321,5 +325,5 @@ export default function App() {
       <div className="detail-section"><h3>Qué se considera un buen contacto</h3><p className="hint">Cargo decisor: 40 puntos · Renta variable: 30 · Gestora de 5–200 empleados: 20 · Análisis de acciones: 10. Gestores: 25 puntos por cargo; analistas: 10.</p></div>
     </Modal>}
     {detail && <DetailDialog contact={detail} demo={demo} onClose={() => setDetail(null)} onEdit={() => { setEditing(detail); setDetail(null); setModal('edit') }} />}
-  </div>
+  </div></PortfolioProvider>
 }
